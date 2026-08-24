@@ -11,7 +11,7 @@
       },
       "authorize": {
         "title": "Godkänn ditt TMDB-konto",
-        "description": "Öppna adressen och godkänn åtkomst:\\n\\n{auth_url}\\n\\nGå sedan tillbaka hit och tryck Skicka."
+        "description": "Öppna adressen och godkänn åtkomst:\n\n{auth_url}\n\nGå sedan tillbaka hit och tryck Skicka."
       }
     },
     "error": {

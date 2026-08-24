@@ -11,7 +11,7 @@
       },
       "authorize": {
         "title": "Authorize your TMDB account",
-        "description": "Open this URL and approve access:\\n\\n{auth_url}\\n\\nThen return here and press Submit."
+        "description": "Open this URL and approve access:\n\n{auth_url}\n\nThen return here and press Submit."
       }
     },
     "error": {
