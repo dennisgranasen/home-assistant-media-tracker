@@ -250,3 +250,36 @@ The main `next upcoming episodes` feed and Upcoming Media Card compatibility
 sensor now use each followed show's `next_episode_to_air` without a 30-day
 cutoff. The configured `upcoming_limit` (default 5) controls how many are
 shown. The today / 7-day / 30-day sensors remain time-windowed.
+
+
+### v0.6.0 card feed
+
+`sensor.media_watch_upcoming_media_card` now exposes three sections for the
+companion card:
+
+- `upcoming_episodes`
+- `watchlist_movies`
+- `discovery_movies`
+
+The legacy `data` TV attribute remains available for compatibility.
+
+
+### v0.7.0 generic feeds
+
+The companion card now has three dedicated entities. Each exposes one common
+`items` attribute:
+
+- `sensor.media_watch_episodes`
+- `sensor.media_watch_watchlist`
+- `sensor.media_watch_discovery`
+
+`sensor.media_watch_episodes` is a **watch queue**, not a release calendar.
+It exposes the first locally unwatched episode of every followed TV show.
+Therefore a show with no recorded progress starts at S01E01 even when TMDB
+already lists a future season as the next episode to air.
+
+The existing today / 7-day / 30-day sensors remain release-calendar views.
+
+Discovery also excludes movies that are already on the TMDB watchlist, so
+using `media_watch.follow` moves a discovery movie to the watchlist feed on
+the next coordinator refresh.

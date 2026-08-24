@@ -423,10 +423,16 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not self.store.is_watched("movie", int(movie["id"]))
             ]
 
+            watchlist_ids = {
+                int(movie["id"])
+                for movie in watchlist_movies
+            }
+
             visible_discovery = [
                 movie
                 for movie in discovered
-                if not self.store.is_watched("movie", int(movie["id"]))
+                if int(movie["id"]) not in watchlist_ids
+                and not self.store.is_watched("movie", int(movie["id"]))
                 and not self.store.is_dismissed("movie", int(movie["id"]))
             ][: int(
                 self._option(
