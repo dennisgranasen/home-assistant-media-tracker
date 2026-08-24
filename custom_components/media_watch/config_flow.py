@@ -11,6 +11,7 @@ from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -27,7 +28,9 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_ACCOUNT_ID,
     CONF_DISCOVERY_LIMIT,
+    CONF_FALLBACK_LANGUAGE,
     CONF_LANGUAGE,
+    CONF_USE_PROFILE_LANGUAGE,
     CONF_MIN_RATING,
     CONF_MIN_VOTES,
     CONF_PROVIDERS,
@@ -35,8 +38,20 @@ from .const import (
     CONF_REGION,
     CONF_SESSION_ID,
     CONF_USERNAME,
+    CONF_DISCOVERY_MAX_PAGES,
+    CONF_DISCOVERY_INCLUDE_GENRES,
+    CONF_DISCOVERY_EXCLUDE_GENRES,
+    CONF_DISCOVERY_GENRE_MATCH,
+    CONF_DISCOVERY_PROVIDER_SCOPE,
+    DEFAULT_DISCOVERY_MAX_PAGES,
+    DEFAULT_DISCOVERY_INCLUDE_GENRES,
+    DEFAULT_DISCOVERY_EXCLUDE_GENRES,
+    DEFAULT_DISCOVERY_GENRE_MATCH,
+    DEFAULT_DISCOVERY_PROVIDER_SCOPE,
     DEFAULT_DISCOVERY_LIMIT,
+    DEFAULT_FALLBACK_LANGUAGE,
     DEFAULT_LANGUAGE,
+    DEFAULT_USE_PROFILE_LANGUAGE,
     DEFAULT_MIN_RATING,
     DEFAULT_MIN_VOTES,
     DEFAULT_PROVIDER_NAMES,
@@ -174,6 +189,8 @@ class MediaWatchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     options={
                         CONF_REGION: DEFAULT_REGION,
                         CONF_LANGUAGE: DEFAULT_LANGUAGE,
+                        CONF_FALLBACK_LANGUAGE: DEFAULT_FALLBACK_LANGUAGE,
+                        CONF_USE_PROFILE_LANGUAGE: DEFAULT_USE_PROFILE_LANGUAGE,
                         CONF_PROVIDERS: default_provider_ids,
                         CONF_MIN_RATING: DEFAULT_MIN_RATING,
                         CONF_MIN_VOTES: DEFAULT_MIN_VOTES,
@@ -255,6 +272,78 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
+                vol.Required(
+                    CONF_USE_PROFILE_LANGUAGE,
+                    default=options.get(
+                        CONF_USE_PROFILE_LANGUAGE,
+                        DEFAULT_USE_PROFILE_LANGUAGE,
+                    ),
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_FALLBACK_LANGUAGE,
+                    default=options.get(
+                        CONF_FALLBACK_LANGUAGE,
+                        DEFAULT_FALLBACK_LANGUAGE,
+                    ),
+                ): TextSelector(TextSelectorConfig()),
+                vol.Required(
+                    CONF_DISCOVERY_PROVIDER_SCOPE,
+                    default=options.get(
+                        CONF_DISCOVERY_PROVIDER_SCOPE,
+                        DEFAULT_DISCOVERY_PROVIDER_SCOPE,
+                    ),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {"value": "all", "label": "All regional providers"},
+                            {"value": "my", "label": "My selected providers"},
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_DISCOVERY_MAX_PAGES,
+                    default=options.get(
+                        CONF_DISCOVERY_MAX_PAGES,
+                        DEFAULT_DISCOVERY_MAX_PAGES,
+                    ),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=20,
+                        step=1,
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Optional(
+                    CONF_DISCOVERY_INCLUDE_GENRES,
+                    default=options.get(
+                        CONF_DISCOVERY_INCLUDE_GENRES,
+                        DEFAULT_DISCOVERY_INCLUDE_GENRES,
+                    ),
+                ): TextSelector(TextSelectorConfig()),
+                vol.Optional(
+                    CONF_DISCOVERY_EXCLUDE_GENRES,
+                    default=options.get(
+                        CONF_DISCOVERY_EXCLUDE_GENRES,
+                        DEFAULT_DISCOVERY_EXCLUDE_GENRES,
+                    ),
+                ): TextSelector(TextSelectorConfig()),
+                vol.Required(
+                    CONF_DISCOVERY_GENRE_MATCH,
+                    default=options.get(
+                        CONF_DISCOVERY_GENRE_MATCH,
+                        DEFAULT_DISCOVERY_GENRE_MATCH,
+                    ),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            {"value": "any", "label": "Any included genre"},
+                            {"value": "all", "label": "All included genres"},
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
                 vol.Required(
                     CONF_REGION,
                     default=current_region,

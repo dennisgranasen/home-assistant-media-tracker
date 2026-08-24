@@ -283,3 +283,100 @@ The existing today / 7-day / 30-day sensors remain release-calendar views.
 Discovery also excludes movies that are already on the TMDB watchlist, so
 using `media_watch.follow` moves a discovery movie to the watchlist feed on
 the next coordinator refresh.
+
+
+### v0.8.0 language handling
+
+Media Watch now uses the primary language/country returned by the authenticated
+TMDB account by default. Movie watchlist and discovery items are re-fetched
+through the movie-details endpoint in that locale instead of trusting the
+language of the discover/watchlist payload.
+
+TMDB's website has a separate **Fallback Language** profile setting, but the
+public account API does not expose that setting. Media Watch therefore has a
+`Fallback language` option (default `en-US`). Metadata resolution is:
+
+1. TMDB profile language (or manual language override)
+2. Media Watch fallback language
+3. TMDB original-language metadata
+
+The fallback is field-aware: a missing localized overview can fall back while
+a localized title remains in the primary language.
+
+
+### v0.9.0 provider filtering
+
+Watchlist and Discovery feeds now keep the information needed for frontend
+provider filtering.
+
+Discovery is generated across all TMDB streaming providers available in the
+configured region. Each enriched movie still exposes
+`available_on_my_services`, so `media-tracker-card` can choose between:
+
+- all regional streaming services
+- only the user's selected providers
+
+The TMDB movie watchlist itself is never modified by this display filter.
+
+
+### v0.10.0 Oscars feed
+
+A new `sensor.media_watch_oscars` exposes the latest Academy Awards Best
+Picture slate using the same `items` feed contract as the other companion-card
+sensors.
+
+The initial feed contains the 98th Academy Awards (2026) Best Picture nominees,
+with the winner identified separately. The Academy list is treated as the
+award authority; TMDB is used to resolve localized media metadata and Swedish
+streaming availability.
+
+Watched and dismissed films are excluded. Movies already on the TMDB watchlist
+remain visible and carry `on_watchlist: true`.
+
+
+### v0.11.0 discovery profiles
+
+New feeds:
+
+- `sensor.media_watch_discovery` — general well-rated movie discovery
+- `sensor.media_watch_personalized_movies` — recommendations aggregated from
+  movie watchlist + locally watched movies
+- `sensor.media_watch_discovery_tv` — general well-rated TV discovery
+- `sensor.media_watch_personalized_tv` — recommendations aggregated from
+  followed/watchlisted + locally watched TV shows
+
+Discovery items expose localized `genres` and `genre_ids`. Genre selection is
+a presentation/feed filter in Media Tracker Card so the same backend feed can
+power several cards with different include/exclude rules.
+
+Personalized ranking counts how many seed titles recommend the same candidate
+and also weights higher-ranked recommendations. Watched, dismissed and already
+watchlisted/followed titles are excluded.
+
+
+### v0.12.0 backend discovery filtering
+
+Discovery can now be constrained directly in the TMDB discover query.
+
+Options:
+
+- **Discovery provider scope**
+  - `all`: all streaming providers in the configured region
+  - `my`: only providers selected in Media Watch
+- **Discovery pages**: 1–20 TMDB pages fetched before local filtering
+- **Backend include genres**: comma-separated TMDB genre IDs
+- **Backend exclude genres**: comma-separated TMDB genre IDs
+- **Backend genre matching**: `any` or `all`
+
+Backend filtering applies to both movie and TV general discovery feeds. The
+card's interactive mood/provider/genre filters remain available as a second,
+fast presentation-layer filter.
+
+Example: fetch a much larger Sci-Fi/Fantasy candidate pool from TMDB:
+
+```text
+Discovery provider scope: all
+Discovery pages: 15
+Backend include genres: 878,14
+Backend genre matching: any
+```

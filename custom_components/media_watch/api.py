@@ -188,6 +188,20 @@ class TMDBApi:
         )
         return data.get("results", [])
 
+
+    async def get_movie_details(
+        self,
+        tmdb_id: int,
+        language: str,
+    ) -> dict[str, Any]:
+        """Return movie details in a requested language."""
+        return await self._request(
+            "GET",
+            f"/movie/{tmdb_id}",
+            params={"language": language},
+            include_session=False,
+        )
+
     async def get_tv_details(
         self, tmdb_id: int, language: str
     ) -> dict[str, Any]:
@@ -247,6 +261,9 @@ class TMDBApi:
         provider_ids: list[int],
         min_rating: float,
         min_votes: int,
+        include_genres: list[int] | None = None,
+        exclude_genres: list[int] | None = None,
+        genre_match: str = "any",
         max_pages: int = 3,
     ) -> list[dict[str, Any]]:
         if not provider_ids:
@@ -264,6 +281,105 @@ class TMDBApi:
                 "vote_count.gte": min_votes,
                 "sort_by": "popularity.desc",
                 "include_adult": "false",
+                **(
+                    {
+                        "with_genres": (
+                            "," if genre_match == "all" else "|"
+                        ).join(str(x) for x in include_genres)
+                    }
+                    if include_genres
+                    else {}
+                ),
+                **(
+                    {
+                        "without_genres": ",".join(
+                            str(x) for x in exclude_genres
+                        )
+                    }
+                    if exclude_genres
+                    else {}
+                ),
             },
+            max_pages=max_pages,
+        )
+
+
+    async def discover_tv(
+        self,
+        *,
+        region: str,
+        language: str,
+        provider_ids: list[int],
+        min_rating: float,
+        min_votes: int,
+        include_genres: list[int] | None = None,
+        exclude_genres: list[int] | None = None,
+        genre_match: str = "any",
+        max_pages: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Discover well-rated TV shows available in a region."""
+        if not provider_ids:
+            return []
+
+        return await self._paged_results(
+            "/discover/tv",
+            params={
+                "language": language,
+                "watch_region": region,
+                "with_watch_providers": "|".join(
+                    str(x) for x in provider_ids
+                ),
+                "with_watch_monetization_types": "flatrate|free|ads",
+                "vote_average.gte": min_rating,
+                "vote_count.gte": min_votes,
+                "sort_by": "popularity.desc",
+                "include_adult": "false",
+                **(
+                    {
+                        "with_genres": (
+                            "," if genre_match == "all" else "|"
+                        ).join(str(x) for x in include_genres)
+                    }
+                    if include_genres
+                    else {}
+                ),
+                **(
+                    {
+                        "without_genres": ",".join(
+                            str(x) for x in exclude_genres
+                        )
+                    }
+                    if exclude_genres
+                    else {}
+                ),
+            },
+            max_pages=max_pages,
+        )
+
+    async def get_movie_recommendations(
+        self,
+        tmdb_id: int,
+        language: str,
+        *,
+        max_pages: int = 1,
+    ) -> list[dict[str, Any]]:
+        """Return TMDB recommendations for one movie."""
+        return await self._paged_results(
+            f"/movie/{tmdb_id}/recommendations",
+            params={"language": language},
+            max_pages=max_pages,
+        )
+
+    async def get_tv_recommendations(
+        self,
+        tmdb_id: int,
+        language: str,
+        *,
+        max_pages: int = 1,
+    ) -> list[dict[str, Any]]:
+        """Return TMDB recommendations for one TV show."""
+        return await self._paged_results(
+            f"/tv/{tmdb_id}/recommendations",
+            params={"language": language},
             max_pages=max_pages,
         )

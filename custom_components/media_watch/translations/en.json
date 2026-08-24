@@ -35,7 +35,14 @@
           "min_rating": "Minimum TMDB rating",
           "min_votes": "Minimum number of votes",
           "discovery_limit": "Maximum discovery results",
-          "upcoming_limit": "Number of upcoming episodes"
+          "upcoming_limit": "Number of upcoming episodes",
+          "use_profile_language": "Use TMDB profile language and region",
+          "fallback_language": "Fallback language",
+          "discovery_provider_scope": "Discovery provider scope",
+          "discovery_max_pages": "Discovery pages",
+          "discovery_include_genres": "Backend include genres",
+          "discovery_exclude_genres": "Backend exclude genres",
+          "discovery_genre_match": "Backend genre matching"
         },
         "data_description": {
           "region": "TMDB region code, for example SE. Re-open options after changing region to refresh the provider list.",
@@ -44,7 +51,14 @@
           "min_rating": "Minimum rating for automatic movie discovery.",
           "min_votes": "Minimum vote count for automatic movie discovery.",
           "discovery_limit": "Maximum number of automatically discovered movies exposed by the sensor.",
-          "upcoming_limit": "How many globally upcoming episodes to expose in the default next-up sensor."
+          "upcoming_limit": "How many globally upcoming episodes to expose in the default next-up sensor.",
+          "use_profile_language": "Use the primary language and country returned by your TMDB account. Disable this to use the manual Language and Region fields below.",
+          "fallback_language": "Used when translated metadata is missing, for example en-US. TMDB has a fallback-language setting on its website, but the public account API does not expose that value, so Media Watch must store it separately.",
+          "discovery_provider_scope": "Choose whether TMDB discovery itself searches all providers in the region or only your selected providers.",
+          "discovery_max_pages": "How many TMDB result pages to fetch before local filtering. Higher values create a larger candidate pool but increase API requests.",
+          "discovery_include_genres": "Comma-separated TMDB genre IDs used directly in the TMDB discover query, e.g. 878,14.",
+          "discovery_exclude_genres": "Comma-separated TMDB genre IDs excluded directly in the TMDB discover query.",
+          "discovery_genre_match": "Require any or all included genres in the TMDB discover query."
         }
       }
     },

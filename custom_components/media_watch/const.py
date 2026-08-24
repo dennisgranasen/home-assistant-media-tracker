@@ -11,6 +11,8 @@ CONF_USERNAME = "username"
 
 CONF_REGION = "region"
 CONF_LANGUAGE = "language"
+CONF_FALLBACK_LANGUAGE = "fallback_language"
+CONF_USE_PROFILE_LANGUAGE = "use_profile_language"
 CONF_PROVIDERS = "providers"
 CONF_MIN_RATING = "min_rating"
 CONF_MIN_VOTES = "min_votes"
@@ -19,6 +21,8 @@ CONF_UPCOMING_LIMIT = "upcoming_limit"
 
 DEFAULT_REGION = "SE"
 DEFAULT_LANGUAGE = "sv-SE"
+DEFAULT_FALLBACK_LANGUAGE = "en-US"
+DEFAULT_USE_PROFILE_LANGUAGE = True
 DEFAULT_MIN_RATING = 7.5
 DEFAULT_MIN_VOTES = 1000
 DEFAULT_DISCOVERY_LIMIT = 30
@@ -62,3 +66,32 @@ ATTR_EPISODE = "episode"
 ATTR_SEASONS = "seasons"
 ATTR_ALL_SEASONS = "all_seasons"
 ATTR_DAYS = "days"
+
+
+# 98th Academy Awards (2026), honoring films released in 2025.
+# Source: Academy of Motion Picture Arts and Sciences.
+OSCAR_BEST_PICTURE_2026 = [
+    {"title": "One Battle after Another", "winner": True},
+    {"title": "Bugonia", "winner": False},
+    {"title": "F1", "winner": False},
+    {"title": "Frankenstein", "winner": False},
+    {"title": "Hamnet", "winner": False},
+    {"title": "Marty Supreme", "winner": False},
+    {"title": "The Secret Agent", "winner": False},
+    {"title": "Sentimental Value", "winner": False},
+    {"title": "Sinners", "winner": False},
+    {"title": "Train Dreams", "winner": False},
+]
+
+
+CONF_DISCOVERY_MAX_PAGES = "discovery_max_pages"
+CONF_DISCOVERY_INCLUDE_GENRES = "discovery_include_genres"
+CONF_DISCOVERY_EXCLUDE_GENRES = "discovery_exclude_genres"
+CONF_DISCOVERY_GENRE_MATCH = "discovery_genre_match"
+CONF_DISCOVERY_PROVIDER_SCOPE = "discovery_provider_scope"
+
+DEFAULT_DISCOVERY_MAX_PAGES = 5
+DEFAULT_DISCOVERY_INCLUDE_GENRES = ""
+DEFAULT_DISCOVERY_EXCLUDE_GENRES = ""
+DEFAULT_DISCOVERY_GENRE_MATCH = "any"
+DEFAULT_DISCOVERY_PROVIDER_SCOPE = "all"

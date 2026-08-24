@@ -35,7 +35,14 @@
           "min_rating": "Lägsta TMDB-betyg",
           "min_votes": "Minsta antal röster",
           "discovery_limit": "Max antal discovery-resultat",
-          "upcoming_limit": "Antal kommande avsnitt"
+          "upcoming_limit": "Antal kommande avsnitt",
+          "use_profile_language": "Använd språk och region från TMDB-profilen",
+          "fallback_language": "Fallback-språk",
+          "discovery_provider_scope": "Providers för Discovery",
+          "discovery_max_pages": "Discovery-sidor",
+          "discovery_include_genres": "Backend: inkludera genrer",
+          "discovery_exclude_genres": "Backend: exkludera genrer",
+          "discovery_genre_match": "Backend: genrematchning"
         },
         "data_description": {
           "region": "TMDB-region, exempelvis SE. Öppna inställningarna igen efter regionsbyte för att uppdatera providerlistan.",
@@ -44,7 +51,14 @@
           "min_rating": "Lägsta betyg för automatisk filmupptäckt.",
           "min_votes": "Minsta antal röster för automatisk filmupptäckt.",
           "discovery_limit": "Max antal automatiskt hittade filmer som exponeras av sensorn.",
-          "upcoming_limit": "Hur många globalt nästkommande avsnitt som ska visas i standardsensorn."
+          "upcoming_limit": "Hur många globalt nästkommande avsnitt som ska visas i standardsensorn.",
+          "use_profile_language": "Använd primärt språk och land som TMDB-kontot returnerar. Stäng av för att använda de manuella fälten Språk och Region nedan.",
+          "fallback_language": "Används när översatt metadata saknas, exempelvis en-US. TMDB har en fallback-inställning på webbplatsen, men den publika konto-API:n exponerar inte värdet, så Media Watch måste lagra det separat.",
+          "discovery_provider_scope": "Välj om TMDB Discovery ska söka bland alla providers i regionen eller bara dina valda tjänster.",
+          "discovery_max_pages": "Antal resultatsidor som hämtas från TMDB före lokal filtrering. Högre värde ger större kandidatpool men fler API-anrop.",
+          "discovery_include_genres": "Kommaseparerade TMDB-genre-ID:n som skickas direkt till discover-frågan, t.ex. 878,14.",
+          "discovery_exclude_genres": "Kommaseparerade TMDB-genre-ID:n som exkluderas direkt i discover-frågan.",
+          "discovery_genre_match": "Kräv någon eller alla inkluderade genrer i TMDB-frågan."
         }
       }
     },

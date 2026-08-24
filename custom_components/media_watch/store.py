@@ -211,3 +211,12 @@ class MediaWatchStore:
     @property
     def dismissed_movies(self) -> list[int]:
         return list(self._data["dismissed_movies"])
+
+
+    @property
+    def watched_tv(self) -> list[int]:
+        return list(self._data["watched_tv"])
+
+    @property
+    def dismissed_tv(self) -> list[int]:
+        return list(self._data["dismissed_tv"])
