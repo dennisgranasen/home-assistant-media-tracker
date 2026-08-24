@@ -296,6 +296,12 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
             )
             provider = ", ".join(provider_names)
 
+            provider_details = (
+                item.get("my_provider_details")
+                or item.get("provider_details")
+                or []
+            )
+
             air_date = item.get("air_date")
             code = item.get("code") or ""
             episode_name = item.get("name") or ""
@@ -313,6 +319,8 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
                     "id": item.get("id"),
                     "tmdb_id": item.get("tmdb_id"),
                     "title": item.get("show"),
+                    "season": item.get("season"),
+                    "episode_number": item.get("episode"),
                     "episode": episode_label,
                     "number": code,
                     "airdate": air_date,
@@ -320,6 +328,7 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
                     "runtime": item.get("runtime"),
                     "provider": provider,
                     "studio": provider,
+                    "provider_details": provider_details,
                     "poster": poster,
                     "fanart": None,
                     "flag": (

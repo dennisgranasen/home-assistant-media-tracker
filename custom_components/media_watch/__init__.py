@@ -382,11 +382,7 @@ async def async_setup_entry(
     )
     hass.services.async_register(
         DOMAIN,
-        SERVICE_MARK_EPISODE_UNWATCHED,
-    SERVICE_MARK_EPISODE_WATCHED,
-    SERVICE_MARK_SEASONS_UNWATCHED,
-    SERVICE_MARK_SEASONS_WATCHED,
-    SERVICE_MARK_UNWATCHED,
+        SERVICE_MARK_UNWATCHED,
         mark_unwatched,
         schema=MEDIA_SCHEMA,
     )

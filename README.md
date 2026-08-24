@@ -236,3 +236,10 @@ TMDB posters, episode code/title, air date, provider information and TMDB ID.
 The integration itself does not bundle or copy Upcoming Media Card. It only
 produces its expected sensor data format, keeping the projects independently
 updatable through HACS.
+
+
+## Media Tracker Card
+
+The compatibility feed also exposes structured `season`, `episode_number` and
+`provider_details` data for the companion `media-tracker-card`, including TMDB
+provider `logo_path` values for provider logos and action parameters.
