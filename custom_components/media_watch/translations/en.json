@@ -11,7 +11,7 @@
       },
       "authorize": {
         "title": "Authorize your TMDB account",
-        "description": "Open this URL and approve access:\n\n{auth_url}\n\nThen return here and press Submit."
+        "description": "Open this URL and approve access:\\n\\n{auth_url}\\n\\nThen return here and press Submit."
       }
     },
     "error": {
@@ -34,15 +34,17 @@
           "providers": "Streaming providers",
           "min_rating": "Minimum TMDB rating",
           "min_votes": "Minimum number of votes",
-          "discovery_limit": "Maximum discovery results"
+          "discovery_limit": "Maximum discovery results",
+          "upcoming_limit": "Number of upcoming episodes"
         },
         "data_description": {
           "region": "TMDB region code, for example SE. Re-open options after changing region to refresh the provider list.",
           "language": "TMDB language, for example sv-SE.",
-          "providers": "Providers counted as available to you.",
+          "providers": "Your subscribed services. This selection is used for discovery and relevance only; title attributes still expose all streaming providers returned by TMDB for the selected region.",
           "min_rating": "Minimum rating for automatic movie discovery.",
           "min_votes": "Minimum vote count for automatic movie discovery.",
-          "discovery_limit": "Maximum number of automatically discovered movies exposed by the sensor."
+          "discovery_limit": "Maximum number of automatically discovered movies exposed by the sensor.",
+          "upcoming_limit": "How many globally upcoming episodes to expose in the default next-up sensor."
         }
       }
     },

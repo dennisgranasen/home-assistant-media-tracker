@@ -1,3 +1,211 @@
+
+upcoming_episodes:
+  name: Upcoming episodes
+  description: Return upcoming episodes across all followed TV shows, sorted by air date.
+  fields:
+    days:
+      name: Days ahead
+      description: 0 means today only. Maximum 30 days.
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 30
+          mode: box
+    limit:
+      name: Maximum results
+      description: Maximum number of episodes to return.
+      required: false
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 100
+          mode: box
+
+
+mark_episode_watched:
+  name: Mark episode as watched
+  description: Mark one episode of a followed TV show as watched.
+  fields:
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    season:
+      name: Season
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    episode:
+      name: Episode
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+mark_episode_unwatched:
+  name: Mark episode as unwatched
+  description: Remove watched state from one episode.
+  fields:
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    season:
+      name: Season
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    episode:
+      name: Episode
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+mark_seasons_watched:
+  name: Mark seasons as watched
+  description: Mark one, several, or all regular seasons of a TV show as watched. Season 0 specials are excluded from "all".
+  fields:
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    seasons:
+      name: Seasons
+      description: Season numbers to mark watched. Leave empty when using All seasons.
+      required: false
+      selector:
+        select:
+          multiple: true
+          custom_value: true
+          options: []
+    all_seasons:
+      name: All seasons
+      description: Mark all regular seasons returned by TMDB as watched.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+mark_seasons_unwatched:
+  name: Mark seasons as unwatched
+  description: Reset one, several, or all regular seasons of a TV show.
+  fields:
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    seasons:
+      name: Seasons
+      description: Season numbers to reset. Leave empty when using All seasons.
+      required: false
+      selector:
+        select:
+          multiple: true
+          custom_value: true
+          options: []
+    all_seasons:
+      name: All seasons
+      description: Reset all regular seasons returned by TMDB.
+      required: false
+      default: false
+      selector:
+        boolean:
+
+search:
+  name: Search
+  description: Search TMDB for movies and TV shows without changing your watchlist.
+  fields:
+    query:
+      name: Search query
+      required: true
+      example: Severance
+      selector:
+        text:
+    media_type:
+      name: Media type
+      required: true
+      default: tv
+      selector:
+        select:
+          options:
+            - label: TV show
+              value: tv
+            - label: Movie
+              value: movie
+            - label: Movies and TV
+              value: all
+    limit:
+      name: Maximum results
+      required: true
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 25
+          mode: box
+
+follow:
+  name: Follow / add to watchlist
+  description: Add a TV show or movie to your TMDB watchlist. TV shows become followed shows in Media Watch.
+  fields:
+    media_type:
+      name: Media type
+      required: true
+      selector:
+        select:
+          options:
+            - movie
+            - tv
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+unfollow:
+  name: Unfollow / remove from watchlist
+  description: Remove a TV show or movie from your TMDB watchlist.
+  fields:
+    media_type:
+      name: Media type
+      required: true
+      selector:
+        select:
+          options:
+            - movie
+            - tv
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
 mark_watched:
   name: Mark as watched
   description: Mark a movie or TV show as watched and remove it from the TMDB watchlist.

@@ -11,7 +11,7 @@
       },
       "authorize": {
         "title": "Godkänn ditt TMDB-konto",
-        "description": "Öppna adressen och godkänn åtkomst:\n\n{auth_url}\n\nGå sedan tillbaka hit och tryck Skicka."
+        "description": "Öppna adressen och godkänn åtkomst:\\n\\n{auth_url}\\n\\nGå sedan tillbaka hit och tryck Skicka."
       }
     },
     "error": {
@@ -34,15 +34,17 @@
           "providers": "Streamingtjänster",
           "min_rating": "Lägsta TMDB-betyg",
           "min_votes": "Minsta antal röster",
-          "discovery_limit": "Max antal discovery-resultat"
+          "discovery_limit": "Max antal discovery-resultat",
+          "upcoming_limit": "Antal kommande avsnitt"
         },
         "data_description": {
           "region": "TMDB-region, exempelvis SE. Öppna inställningarna igen efter regionsbyte för att uppdatera providerlistan.",
           "language": "TMDB-språk, exempelvis sv-SE.",
-          "providers": "Tjänster som ska räknas som tillgängliga för dig.",
+          "providers": "Tjänster du abonnerar på. Valet används bara för discovery och relevans; titelattribut visar fortfarande alla streamingtjänster som TMDB returnerar för vald region.",
           "min_rating": "Lägsta betyg för automatisk filmupptäckt.",
           "min_votes": "Minsta antal röster för automatisk filmupptäckt.",
-          "discovery_limit": "Max antal automatiskt hittade filmer som exponeras av sensorn."
+          "discovery_limit": "Max antal automatiskt hittade filmer som exponeras av sensorn.",
+          "upcoming_limit": "Hur många globalt nästkommande avsnitt som ska visas i standardsensorn."
         }
       }
     },

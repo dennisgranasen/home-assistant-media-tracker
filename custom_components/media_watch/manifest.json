@@ -1,7 +1,9 @@
 {
   "domain": "media_watch",
   "name": "Media Watch",
-  "codeowners": ["@dennisgranasen"],
+  "codeowners": [
+    "@dennisgranasen"
+  ],
   "config_flow": true,
   "single_config_entry": true,
   "documentation": "https://github.com/dennisgranasen/home-assistant-media-tracker",
@@ -9,5 +11,5 @@
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.5.0"
 }

@@ -145,11 +145,69 @@ class TMDBApi:
             },
         )
 
+
+    async def search_tv(
+        self,
+        query: str,
+        language: str,
+        *,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """Search TMDB TV shows."""
+        data = await self._request(
+            "GET",
+            "/search/tv",
+            params={
+                "query": query,
+                "language": language,
+                "page": page,
+                "include_adult": "false",
+            },
+            include_session=False,
+        )
+        return data.get("results", [])
+
+    async def search_movies(
+        self,
+        query: str,
+        language: str,
+        *,
+        page: int = 1,
+    ) -> list[dict[str, Any]]:
+        """Search TMDB movies."""
+        data = await self._request(
+            "GET",
+            "/search/movie",
+            params={
+                "query": query,
+                "language": language,
+                "page": page,
+                "include_adult": "false",
+            },
+            include_session=False,
+        )
+        return data.get("results", [])
+
     async def get_tv_details(
         self, tmdb_id: int, language: str
     ) -> dict[str, Any]:
         return await self._request(
             "GET", f"/tv/{tmdb_id}", params={"language": language}
+        )
+
+
+    async def get_tv_season(
+        self,
+        tmdb_id: int,
+        season_number: int,
+        language: str,
+    ) -> dict[str, Any]:
+        """Return TV season details including episodes."""
+        return await self._request(
+            "GET",
+            f"/tv/{tmdb_id}/season/{season_number}",
+            params={"language": language},
+            include_session=False,
         )
 
     async def get_tv_watch_providers(self, tmdb_id: int) -> dict[str, Any]:
@@ -164,6 +222,18 @@ class TMDBApi:
         data = await self._request(
             "GET",
             "/watch/providers/movie",
+            params={"watch_region": region},
+            include_session=False,
+        )
+        return data.get("results", [])
+
+    async def get_available_tv_providers(
+        self, region: str
+    ) -> list[dict[str, Any]]:
+        """Return TV providers available in a region."""
+        data = await self._request(
+            "GET",
+            "/watch/providers/tv",
             params={"watch_region": region},
             include_session=False,
         )
