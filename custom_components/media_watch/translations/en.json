@@ -1,0 +1,53 @@
+{
+  "title": "Media Watch",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to TMDB",
+        "description": "Enter your TMDB API Read Access Token. Create one under TMDB account Settings > API.",
+        "data": {
+          "access_token": "API Read Access Token"
+        }
+      },
+      "authorize": {
+        "title": "Authorize your TMDB account",
+        "description": "Open this URL and approve access:\\n\\n{auth_url}\\n\\nThen return here and press Submit."
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to TMDB.",
+      "invalid_auth": "The TMDB access token is invalid.",
+      "not_authorized": "The request has not been authorized on TMDB yet."
+    },
+    "abort": {
+      "already_configured": "This TMDB account is already configured.",
+      "missing_auth_data": "Authentication data was lost. Start setup again."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Media Watch settings",
+        "data": {
+          "region": "Region",
+          "language": "Language",
+          "providers": "Streaming providers",
+          "min_rating": "Minimum TMDB rating",
+          "min_votes": "Minimum number of votes",
+          "discovery_limit": "Maximum discovery results"
+        },
+        "data_description": {
+          "region": "TMDB region code, for example SE. Re-open options after changing region to refresh the provider list.",
+          "language": "TMDB language, for example sv-SE.",
+          "providers": "Providers counted as available to you.",
+          "min_rating": "Minimum rating for automatic movie discovery.",
+          "min_votes": "Minimum vote count for automatic movie discovery.",
+          "discovery_limit": "Maximum number of automatically discovered movies exposed by the sensor."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not load streaming providers from TMDB."
+    }
+  }
+}

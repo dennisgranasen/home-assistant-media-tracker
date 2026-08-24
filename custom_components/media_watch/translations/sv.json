@@ -1,0 +1,53 @@
+{
+  "title": "Media Watch",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Anslut till TMDB",
+        "description": "Ange din TMDB API Read Access Token. Skapa den under Settings > API på ditt TMDB-konto.",
+        "data": {
+          "access_token": "API Read Access Token"
+        }
+      },
+      "authorize": {
+        "title": "Godkänn ditt TMDB-konto",
+        "description": "Öppna adressen och godkänn åtkomst:\\n\\n{auth_url}\\n\\nGå sedan tillbaka hit och tryck Skicka."
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunde inte ansluta till TMDB.",
+      "invalid_auth": "TMDB-token är ogiltig.",
+      "not_authorized": "Begäran har ännu inte godkänts hos TMDB."
+    },
+    "abort": {
+      "already_configured": "Det här TMDB-kontot är redan konfigurerat.",
+      "missing_auth_data": "Autentiseringsinformationen försvann. Starta installationen igen."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Media Watch-inställningar",
+        "data": {
+          "region": "Region",
+          "language": "Språk",
+          "providers": "Streamingtjänster",
+          "min_rating": "Lägsta TMDB-betyg",
+          "min_votes": "Minsta antal röster",
+          "discovery_limit": "Max antal discovery-resultat"
+        },
+        "data_description": {
+          "region": "TMDB-region, exempelvis SE. Öppna inställningarna igen efter regionsbyte för att uppdatera providerlistan.",
+          "language": "TMDB-språk, exempelvis sv-SE.",
+          "providers": "Tjänster som ska räknas som tillgängliga för dig.",
+          "min_rating": "Lägsta betyg för automatisk filmupptäckt.",
+          "min_votes": "Minsta antal röster för automatisk filmupptäckt.",
+          "discovery_limit": "Max antal automatiskt hittade filmer som exponeras av sensorn."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunde inte läsa streamingtjänster från TMDB."
+    }
+  }
+}

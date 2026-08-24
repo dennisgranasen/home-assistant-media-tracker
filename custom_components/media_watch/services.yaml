@@ -1,0 +1,83 @@
+mark_watched:
+  name: Mark as watched
+  description: Mark a movie or TV show as watched and remove it from the TMDB watchlist.
+  fields:
+    media_type:
+      name: Media type
+      required: true
+      selector:
+        select:
+          options:
+            - movie
+            - tv
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+mark_unwatched:
+  name: Mark as unwatched
+  description: Remove the local watched state.
+  fields:
+    media_type:
+      name: Media type
+      required: true
+      selector:
+        select:
+          options:
+            - movie
+            - tv
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+dismiss:
+  name: Dismiss
+  description: Hide an item from Media Watch discovery.
+  fields:
+    media_type:
+      name: Media type
+      required: true
+      selector:
+        select:
+          options:
+            - movie
+            - tv
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+undismiss:
+  name: Undismiss
+  description: Allow a dismissed item to appear again.
+  fields:
+    media_type:
+      name: Media type
+      required: true
+      selector:
+        select:
+          options:
+            - movie
+            - tv
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
+refresh:
+  name: Refresh
+  description: Refresh Media Watch immediately.
