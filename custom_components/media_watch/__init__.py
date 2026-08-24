@@ -158,6 +158,10 @@ async def async_setup_entry(
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    def schedule_refresh() -> None:
+        """Refresh coordinator data without blocking a user action."""
+        hass.async_create_task(coordinator.async_request_refresh())
+
     async def mark_watched(call: ServiceCall) -> None:
         media_type = call.data[ATTR_MEDIA_TYPE]
         tmdb_id = call.data[ATTR_TMDB_ID]
@@ -172,28 +176,28 @@ async def async_setup_entry(
             tmdb_id,
             False,
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     async def mark_unwatched(call: ServiceCall) -> None:
         await store.mark_unwatched(
             call.data[ATTR_MEDIA_TYPE],
             call.data[ATTR_TMDB_ID],
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     async def dismiss(call: ServiceCall) -> None:
         await store.dismiss(
             call.data[ATTR_MEDIA_TYPE],
             call.data[ATTR_TMDB_ID],
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     async def undismiss(call: ServiceCall) -> None:
         await store.undismiss(
             call.data[ATTR_MEDIA_TYPE],
             call.data[ATTR_TMDB_ID],
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     async def follow(call: ServiceCall) -> None:
         """Add a movie/show to the TMDB watchlist.
@@ -214,7 +218,7 @@ async def async_setup_entry(
             tmdb_id,
             True,
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     async def unfollow(call: ServiceCall) -> None:
         """Remove a movie/show from the TMDB watchlist."""
@@ -224,7 +228,7 @@ async def async_setup_entry(
             call.data[ATTR_TMDB_ID],
             False,
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
 
     async def mark_episode_watched(call: ServiceCall) -> None:
@@ -234,7 +238,7 @@ async def async_setup_entry(
             int(call.data[ATTR_SEASON]),
             int(call.data[ATTR_EPISODE]),
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     async def mark_episode_unwatched(call: ServiceCall) -> None:
         """Mark one TV episode unwatched."""
@@ -243,7 +247,7 @@ async def async_setup_entry(
             int(call.data[ATTR_SEASON]),
             int(call.data[ATTR_EPISODE]),
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     async def _resolve_seasons(call: ServiceCall) -> list[int]:
         """Resolve explicit seasons or all regular seasons from TMDB."""
@@ -280,7 +284,7 @@ async def async_setup_entry(
             int(call.data[ATTR_TMDB_ID]),
             seasons,
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     async def mark_seasons_unwatched(call: ServiceCall) -> None:
         """Reset one, multiple, or all regular seasons."""
@@ -292,7 +296,7 @@ async def async_setup_entry(
             int(call.data[ATTR_TMDB_ID]),
             seasons,
         )
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
 
     async def upcoming_episodes(
@@ -372,7 +376,7 @@ async def async_setup_entry(
         }
 
     async def refresh(_: ServiceCall) -> None:
-        await coordinator.async_request_refresh()
+        schedule_refresh()
 
     hass.services.async_register(
         DOMAIN,

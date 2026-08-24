@@ -388,3 +388,13 @@ Fixed `sensor.media_watch_discovery` dropping `genre_ids` and `genres` from
 its `items` attribute. The coordinator already had the data, but the feed
 adapter omitted it, causing every card-side mood/genre filter to return an
 empty list.
+
+
+### v0.12.2 responsive actions
+
+Media Watch service actions no longer block while a full coordinator refresh
+runs. The durable local/TMDB mutation is completed first, then the expensive
+coordinator refresh is scheduled in the background.
+
+This is especially important now that a refresh can include movie/TV
+discovery, personalized recommendations, provider metadata and Oscars data.
