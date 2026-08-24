@@ -380,3 +380,11 @@ Discovery pages: 15
 Backend include genres: 878,14
 Backend genre matching: any
 ```
+
+
+### v0.12.1 discovery genre feed fix
+
+Fixed `sensor.media_watch_discovery` dropping `genre_ids` and `genres` from
+its `items` attribute. The coordinator already had the data, but the feed
+adapter omitted it, causing every card-side mood/genre filter to return an
+empty list.

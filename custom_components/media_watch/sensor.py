@@ -437,6 +437,8 @@ class MovieDiscoveryFeedSensor(_MediaTrackerFeedSensor):
             "vote_average": item.get("vote_average"),
             "vote_count": item.get("vote_count"),
             "overview": item.get("overview") or "",
+            "genre_ids": item.get("genre_ids", []),
+            "genres": item.get("genres", []),
             "poster": (
                 f"https://image.tmdb.org/t/p/w500{item['poster_path']}"
                 if item.get("poster_path")
