@@ -266,7 +266,7 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
     @property
     def _items(self) -> list[dict[str, Any]]:
         episodes = self.coordinator.data.get(
-            "episodes_next_30_days", []
+            "upcoming_episodes_next", []
         )
 
         # First record is Upcoming Media Card's display template.

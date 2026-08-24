@@ -445,6 +445,44 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 *(self._enrich_movie(movie) for movie in visible_discovery)
             )
 
+            global_next_episodes: list[dict[str, Any]] = []
+
+            for show in tv_details:
+                episode = show.get("next_episode_to_air")
+                if not episode or not episode.get("air_date"):
+                    continue
+
+                global_next_episodes.append(
+                    {
+                        "tmdb_id": show["id"],
+                        "show": show["name"],
+                        "poster_path": show.get("poster_path"),
+                        "providers": show.get("providers", []),
+                        "provider_details": show.get(
+                            "provider_details", []
+                        ),
+                        "my_providers": show.get(
+                            "my_providers", []
+                        ),
+                        "my_provider_details": show.get(
+                            "my_provider_details", []
+                        ),
+                        "available_on_my_services": show.get(
+                            "available_on_my_services", False
+                        ),
+                        **episode,
+                    }
+                )
+
+            global_next_episodes.sort(
+                key=lambda item: (
+                    item.get("air_date") or "9999-12-31",
+                    item.get("show") or "",
+                    int(item.get("season") or 0),
+                    int(item.get("episode") or 0),
+                )
+            )
+
             global_upcoming: list[dict[str, Any]] = []
 
             for show in tv_details:
@@ -496,7 +534,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "movie_watchlist": movie_details,
                 "following_tv": tv_details,
                 "upcoming_episodes_all": global_upcoming,
-                "upcoming_episodes_next": global_upcoming[
+                "upcoming_episodes_next": global_next_episodes[
                     : self.upcoming_limit
                 ],
                 "episodes_today": episodes_today,

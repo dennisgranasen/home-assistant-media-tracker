@@ -243,3 +243,10 @@ updatable through HACS.
 The compatibility feed also exposes structured `season`, `episode_number` and
 `provider_details` data for the companion `media-tracker-card`, including TMDB
 provider `logo_path` values for provider logos and action parameters.
+
+### v0.5.3 upcoming behavior
+
+The main `next upcoming episodes` feed and Upcoming Media Card compatibility
+sensor now use each followed show's `next_episode_to_air` without a 30-day
+cutoff. The configured `upcoming_limit` (default 5) controls how many are
+shown. The today / 7-day / 30-day sensors remain time-windowed.
