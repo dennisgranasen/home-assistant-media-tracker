@@ -16,7 +16,7 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
-    SelectSelectorOptionDict,
+    SelectOptionDict,
     TextSelector,
     TextSelectorConfig,
 )
@@ -180,7 +180,7 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
             errors["base"] = "cannot_connect"
 
         provider_options = [
-            SelectSelectorOptionDict(
+            SelectOptionDict(
                 value=str(provider["provider_id"]),
                 label=str(provider["provider_name"]),
             )
