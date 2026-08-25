@@ -322,6 +322,37 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         return recipients
 
     @classmethod
+    def _person_aliases(
+        cls,
+        nominee_text: str,
+        category: str,
+    ) -> dict[str, str]:
+        """Map Chinese person names to their official English spelling."""
+        if category in {
+            "Best Film",
+            "Best Asian Chinese Language Film",
+            "Best Asian Film",
+        }:
+            return {}
+
+        chinese_names: list[str] = []
+        for line in cls._entry_lines(nominee_text):
+            prefix = cls._clean_numbered(
+                re.split(r"[（(]", line, maxsplit=1)[0]
+            ).strip()
+            if not re.search(r"[\u3400-\u9fff]", prefix):
+                continue
+            for name in re.split(r"[、,，/&]+", prefix):
+                name = name.strip()
+                if name and name not in chinese_names:
+                    chinese_names.append(name)
+
+        english_names = cls._recipients(nominee_text, category)
+        if len(chinese_names) != len(english_names):
+            return {}
+        return dict(zip(chinese_names, english_names, strict=True))
+
+    @classmethod
     def _parse_rows(
         cls,
         rows: list[list[str]],
@@ -406,6 +437,10 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                             nominee,
                             category,
                         ),
+                        "person_aliases": cls._person_aliases(
+                            nominee,
+                            category,
+                        ),
                         "stable_key": (
                             f"{award_year}:"
                             f"{title_candidates[-1].casefold()}"
@@ -434,6 +469,10 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                                 "title": title_candidates[-1],
                                 "title_candidates": title_candidates,
                                 "recipients": cls._recipients(
+                                    flat_cells[1],
+                                    category,
+                                ),
+                                "person_aliases": cls._person_aliases(
                                     flat_cells[1],
                                     category,
                                 ),
@@ -724,4 +763,14 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                 or record["category"] == category
             )
         ]
-        return aggregate_records(selected, status)
+        person_aliases = {
+            chinese: english
+            for record in records
+            for chinese, english in record.get(
+                "person_aliases", {}
+            ).items()
+        }
+        result = aggregate_records(selected, status)
+        for item in result:
+            item["person_aliases"] = dict(person_aliases)
+        return result

@@ -247,6 +247,38 @@ def test_award_recipient_overrides_localized_director_name() -> None:
     ]
 
 
+def test_hong_kong_aliases_override_tmdb_credits_for_any_category() -> None:
+    coordinator = _coordinator()
+
+    async def enrich(self, candidate):
+        return {
+            "id": candidate["id"],
+            "directors": ["梁栢堅"],
+            "cast": ["郭富城", "English Name"],
+        }
+
+    coordinator._enrich_movie = MethodType(enrich, coordinator)
+
+    result = asyncio.run(
+        coordinator._resolve_award_title(
+            {
+                "tmdb_id": 7,
+                "categories": ["Best Film"],
+                "recipients": [],
+                "person_aliases": {
+                    "梁栢堅": "Patrick Leung Pak Kin",
+                    "郭富城": "Aaron Kwok",
+                },
+            },
+            media_type="movie",
+            award_source="hong_kong_film_awards",
+        )
+    )
+
+    assert result["directors"] == ["Patrick Leung Pak Kin"]
+    assert result["cast"] == ["Aaron Kwok", "English Name"]
+
+
 def test_watchlist_movies_receive_cached_top_film_awards(
     monkeypatch,
 ) -> None:

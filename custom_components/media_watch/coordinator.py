@@ -1525,6 +1525,22 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         award_categories = list(award_item.get("categories", []))
         recipients = list(award_item.get("recipients", []))
+        if award_source == "hong_kong_film_awards":
+            aliases = {
+                str(chinese).strip(): str(english).strip()
+                for chinese, english in award_item.get(
+                    "person_aliases", {}
+                ).items()
+                if str(chinese).strip() and str(english).strip()
+            }
+            item["directors"] = [
+                aliases.get(str(name).strip(), str(name).strip())
+                for name in item.get("directors", [])
+            ]
+            item["cast"] = [
+                aliases.get(str(name).strip(), str(name).strip())
+                for name in item.get("cast", [])
+            ]
         item["award"] = {
             "organization": award_item.get("organization") or award_source,
             "source": award_source,

@@ -81,6 +81,9 @@ def test_person_category_uses_english_recipient_and_only_film_as_title() -> None
     assert len(records) == 1
     assert records[0]["title_candidates"] == ["CIAO UFO"]
     assert records[0]["recipients"] == ["Patrick Leung Pak Kin"]
+    assert records[0]["person_aliases"] == {
+        "梁栢堅": "Patrick Leung Pak Kin"
+    }
     assert records[0]["winner"] is True
 
     aggregated = asyncio.run(
@@ -102,6 +105,55 @@ def test_person_category_uses_english_recipient_and_only_film_as_title() -> None
     )
     assert aggregated[0]["title"] == "CIAO UFO"
     assert aggregated[0]["recipients"] == ["Patrick Leung Pak Kin"]
+    assert aggregated[0]["person_aliases"] == {
+        "梁栢堅": "Patrick Leung Pak Kin"
+    }
+
+
+def test_best_film_results_include_english_person_aliases() -> None:
+    html = """
+    <table>
+      <tr><td>最佳電影<br>Best Film</td>
+        <td><ol><li>再見UFO CIAO UFO</li></ol></td>
+        <td>再見UFO CIAO UFO</td></tr>
+      <tr><td>最佳導演<br>Best Director</td>
+        <td><ol><li>梁栢堅（再見UFO）<br>
+          Patrick Leung Pak Kin (CIAO UFO)</li></ol></td>
+        <td>梁栢堅（再見UFO）<br>
+          Patrick Leung Pak Kin (CIAO UFO)</td></tr>
+      <tr><td>最佳男主角<br>Best Actor</td>
+        <td><ol><li>郭富城（再見UFO）<br>
+          Aaron Kwok (CIAO UFO)</li></ol></td>
+        <td>郭富城（再見UFO）<br>Aaron Kwok (CIAO UFO)</td></tr>
+    </table>
+    """
+    parser = _TableTextParser(number_ordered_list_items=True)
+    parser.feed(html)
+    url = HongKongFilmAwardsAdapter._url(44)
+    adapter = HongKongFilmAwardsAdapter(
+        SimpleNamespace(
+            data={
+                "media_watch_award_http_cache": {
+                    f"table:numbered:{url}": parser.rows,
+                }
+            }
+        )
+    )
+
+    result = asyncio.run(
+        adapter.async_filter_titles(
+            media_type="movie",
+            year_from=2026,
+            year_to=2026,
+            category="Best Film",
+            status="winner",
+        )
+    )
+
+    assert result[0]["person_aliases"] == {
+        "梁栢堅": "Patrick Leung Pak Kin",
+        "郭富城": "Aaron Kwok",
+    }
 
 
 def test_adapter_uses_numbered_table_variant_for_winner_filter() -> None:
