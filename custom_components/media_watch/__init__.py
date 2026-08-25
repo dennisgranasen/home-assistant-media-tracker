@@ -488,21 +488,24 @@ async def async_unload_entry(
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
         if not hass.data[DOMAIN]:
+            for cache_key in (
+                "media_watch_award_adapters",
+                "media_watch_award_adapter_timestamps",
+                "media_watch_award_http_cache",
+                "media_watch_award_http_cache_timestamps",
+            ):
+                hass.data.pop(cache_key, None)
             for service in (
                 SERVICE_MARK_WATCHED,
                 SERVICE_MARK_EPISODE_UNWATCHED,
-    SERVICE_MARK_EPISODE_WATCHED,
-    SERVICE_MARK_SEASONS_UNWATCHED,
-    SERVICE_MARK_SEASONS_WATCHED,
-    SERVICE_MARK_UNWATCHED,
+                SERVICE_MARK_EPISODE_WATCHED,
+                SERVICE_MARK_SEASONS_UNWATCHED,
+                SERVICE_MARK_SEASONS_WATCHED,
+                SERVICE_MARK_UNWATCHED,
                 SERVICE_DISMISS,
                 SERVICE_UNDISMISS,
                 SERVICE_FOLLOW,
                 SERVICE_UNFOLLOW,
-                SERVICE_MARK_EPISODE_WATCHED,
-                SERVICE_MARK_EPISODE_UNWATCHED,
-                SERVICE_MARK_SEASONS_WATCHED,
-                SERVICE_MARK_SEASONS_UNWATCHED,
                 SERVICE_UPCOMING_EPISODES,
                 SERVICE_SEARCH,
                 SERVICE_REFRESH,

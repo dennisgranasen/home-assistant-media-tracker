@@ -90,6 +90,16 @@ def test_sensor_private_module_calls_resolve() -> None:
     assert missing == []
 
 
+def test_all_movie_feeds_expose_fallback_title() -> None:
+    source = (
+        ROOT / "custom_components/media_watch/sensor.py"
+    ).read_text(encoding="utf-8")
+
+    assert source.count(
+        '"fallback_title": item.get("fallback_title")'
+    ) == 3
+
+
 def test_startup_deferred_work_uses_background_tasks() -> None:
     """Long award fetches must not extend Home Assistant startup."""
     expected = {

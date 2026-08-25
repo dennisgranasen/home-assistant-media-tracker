@@ -821,8 +821,10 @@ is AST-checked so that:
   three credited cast members. Credits are appended to the existing TMDB movie
   details request, so this does not add another request per title.
 - The same existing movie-details response also supplies `runtime`, localized
-  `tagline`, `original_language`, `production_countries` and collection/
-  franchise metadata to movie profile and watchlist feeds.
+  `tagline`, `original_language`, `production_countries`, writers and
+  collection/franchise metadata to movie profile and watchlist feeds. The
+  selected-language title is exposed as `title`; a different title from the
+  configured fallback language is exposed separately as `fallback_title`.
 - Award-backed profile items expose a compact `award_summary` containing total
   nominations and wins, winner state, organizations, years, categories and
   winning categories. It is derived from the existing `award`/`awards` data

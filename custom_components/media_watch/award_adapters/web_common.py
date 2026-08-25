@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+import time
 from collections import defaultdict
 from html.parser import HTMLParser
 from typing import Any
@@ -21,6 +22,32 @@ AWARD_HTTP_HEADERS = {
     "Accept": "text/html,application/xhtml+xml",
     "Accept-Language": "en-US,en;q=0.9",
 }
+AWARD_HTTP_CACHE_TTL = 6 * 60 * 60
+
+
+def _cached_value(hass, key: str) -> Any | None:
+    """Return a fresh cached value, accepting legacy entries once."""
+    cache = hass.data.setdefault("media_watch_award_http_cache", {})
+    timestamps = hass.data.setdefault(
+        "media_watch_award_http_cache_timestamps", {}
+    )
+    if key not in cache:
+        return None
+    now = time.monotonic()
+    cached_at = float(timestamps.setdefault(key, now))
+    if now - cached_at < AWARD_HTTP_CACHE_TTL:
+        return cache[key]
+    cache.pop(key, None)
+    timestamps.pop(key, None)
+    return None
+
+
+def _store_cached_value(hass, key: str, value: Any) -> None:
+    """Store one parsed HTTP result with a monotonic timestamp."""
+    hass.data.setdefault("media_watch_award_http_cache", {})[key] = value
+    hass.data.setdefault(
+        "media_watch_award_http_cache_timestamps", {}
+    )[key] = time.monotonic()
 
 
 
@@ -48,9 +75,9 @@ class _BlockTextParser(HTMLParser):
 
 
 async def fetch_lines(hass, url: str) -> list[str]:
-    cache = hass.data.setdefault("media_watch_award_http_cache", {})
-    if url in cache:
-        return list(cache[url])
+    cached = _cached_value(hass, url)
+    if cached is not None:
+        return list(cached)
     session = async_get_clientsession(hass)
     async with session.get(url, timeout=45, headers=AWARD_HTTP_HEADERS) as response:
         response.raise_for_status()
@@ -58,16 +85,16 @@ async def fetch_lines(hass, url: str) -> list[str]:
     parser = _BlockTextParser()
     parser.feed(text)
     lines = parser.lines()
-    cache[url] = list(lines)
+    _store_cached_value(hass, url, list(lines))
     return lines
 
 
 async def fetch_text(hass, url: str) -> str:
     """Fetch and cache an award source as raw HTML text."""
     key = f"text:{url}"
-    cache = hass.data.setdefault("media_watch_award_http_cache", {})
-    if key in cache:
-        return str(cache[key])
+    cached = _cached_value(hass, key)
+    if cached is not None:
+        return str(cached)
     session = async_get_clientsession(hass)
     async with session.get(
         url,
@@ -76,7 +103,7 @@ async def fetch_text(hass, url: str) -> str:
     ) as response:
         response.raise_for_status()
         text = await response.text()
-    cache[key] = text
+    _store_cached_value(hass, key, text)
     return text
 
 
@@ -236,9 +263,9 @@ async def fetch_table_rows(
     """Fetch and cache an HTML page parsed into table rows."""
     cache_variant = "numbered" if number_ordered_list_items else "plain"
     key = f"table:{cache_variant}:{url}"
-    cache = hass.data.setdefault("media_watch_award_http_cache", {})
-    if key in cache:
-        return [list(row) for row in cache[key]]
+    cached = _cached_value(hass, key)
+    if cached is not None:
+        return [list(row) for row in cached]
 
     session = async_get_clientsession(hass)
     async with session.get(url, timeout=45, headers=AWARD_HTTP_HEADERS) as response:
@@ -249,5 +276,9 @@ async def fetch_table_rows(
         number_ordered_list_items=number_ordered_list_items
     )
     parser.feed(text)
-    cache[key] = [list(row) for row in parser.rows]
+    _store_cached_value(
+        hass,
+        key,
+        [list(row) for row in parser.rows],
+    )
     return parser.rows

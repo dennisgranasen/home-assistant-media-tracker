@@ -257,6 +257,19 @@ class TMDBApi:
             include_session=False,
         )
 
+    async def get_person_details(
+        self,
+        person_id: int,
+        language: str = "en-US",
+    ) -> dict[str, Any]:
+        """Return person aliases for localized credit-name fallback."""
+        return await self._request(
+            "GET",
+            f"/person/{person_id}",
+            params={"language": language},
+            include_session=False,
+        )
+
     async def get_tv_details(
         self, tmdb_id: int, language: str
     ) -> dict[str, Any]:

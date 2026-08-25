@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Type
 
 from .award_adapter import AwardAdapter, AwardAdapterInfo
@@ -28,6 +29,7 @@ ADAPTER_TYPES: dict[str, Type[AwardAdapter]] = {
         HongKongFilmAwardsAdapter,
     )
 }
+ADAPTER_CACHE_TTL = 6 * 60 * 60
 
 
 def providers_for_media_type(media_type: str) -> list[AwardAdapterInfo]:
@@ -42,8 +44,16 @@ def create_adapter(hass, source: str) -> AwardAdapter | None:
     if adapter_type is None:
         return None
     cache = hass.data.setdefault("media_watch_award_adapters", {})
-    if source not in cache:
+    timestamps = hass.data.setdefault(
+        "media_watch_award_adapter_timestamps", {}
+    )
+    now = time.monotonic()
+    if source in cache and source not in timestamps:
+        timestamps[source] = now
+    cached_at = float(timestamps.get(source, 0.0))
+    if source not in cache or now - cached_at >= ADAPTER_CACHE_TTL:
         cache[source] = adapter_type(hass)
+        timestamps[source] = now
     return cache[source]
 
 

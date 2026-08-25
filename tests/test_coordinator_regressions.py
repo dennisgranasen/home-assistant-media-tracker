@@ -33,6 +33,9 @@ class _Store:
 
 
 def _coordinator() -> MediaWatchCoordinator:
+    async def async_refresh() -> None:
+        return None
+
     coordinator = object.__new__(MediaWatchCoordinator)
     coordinator.store = _Store()
     coordinator.hass = SimpleNamespace(
@@ -43,9 +46,97 @@ def _coordinator() -> MediaWatchCoordinator:
         ),
     )
     coordinator._award_tmdb_cache = {}
+    coordinator._english_person_name_cache = {}
+    coordinator._english_person_name_retry_after = {}
     coordinator._watchlist_award_task = None
+    coordinator._watchlist_award_publish_task = None
+    coordinator._watchlist_award_publish_pending = False
+    coordinator._watchlist_award_failed_sources = set()
+    coordinator._watchlist_award_retry_after = 0.0
+    coordinator.async_refresh = async_refresh
     coordinator.async_update_listeners = lambda: None
     return coordinator
+
+
+def test_selected_language_wins_for_same_language_original_title() -> None:
+    coordinator = _coordinator()
+    coordinator.entry = SimpleNamespace(
+        options={"language": "sv-SE", "fallback_language": "en-US"}
+    )
+    coordinator._profile_language = None
+
+    assert coordinator._localized_field(
+        {
+            "title": "Utvandrarna",
+            "original_title": "Utvandrarna",
+            "original_language": "sv",
+        },
+        {
+            "title": "The Emigrants",
+            "original_title": "Utvandrarna",
+            "original_language": "sv",
+        },
+        "title",
+        "original_title",
+    ) == "Utvandrarna"
+
+
+def test_english_fallback_wins_when_swedish_translation_is_missing() -> None:
+    coordinator = _coordinator()
+    coordinator.entry = SimpleNamespace(
+        options={"language": "sv-SE", "fallback_language": "en-US"}
+    )
+    coordinator._profile_language = None
+
+    assert coordinator._localized_field(
+        {
+            "title": "原始片名",
+            "original_title": "原始片名",
+            "original_language": "zh",
+        },
+        {
+            "title": "English title",
+            "original_title": "原始片名",
+            "original_language": "zh",
+        },
+        "title",
+        "original_title",
+    ) == "English title"
+
+
+def test_movie_enrichment_keeps_swedish_title_and_exposes_english_fallback() -> None:
+    class Api:
+        async def get_movie_details(self, _tmdb_id, language):
+            common = {
+                "id": 1,
+                "original_title": "Utvandrarna",
+                "original_language": "sv",
+                "credits": {},
+                "genres": [],
+            }
+            return {
+                **common,
+                "title": (
+                    "The Emigrants" if language == "en-US" else "Utvandrarna"
+                ),
+            }
+
+        async def get_movie_watch_providers(self, _tmdb_id):
+            return {"results": {}}
+
+    coordinator = _coordinator()
+    coordinator.api = Api()
+    coordinator.entry = SimpleNamespace(
+        options={"language": "sv-SE", "fallback_language": "en-US"}
+    )
+    coordinator._profile_language = None
+    coordinator._profile_region = None
+
+    result = asyncio.run(coordinator._enrich_movie({"id": 1}))
+
+    assert result["title"] == "Utvandrarna"
+    assert result["fallback_title"] == "The Emigrants"
+    assert result["original_title"] == "Utvandrarna"
 
 
 def test_legacy_release_dates_apply_to_post_filter() -> None:
@@ -134,8 +225,9 @@ def test_movie_enrichment_exposes_ui_metadata_without_extra_endpoint() -> None:
                 },
                 "credits": {
                     "crew": [
-                        {"job": "Director", "name": "Director One"},
-                        {"job": "Director", "name": "Director One"},
+                        {"id": 1, "job": "Director", "name": "Director One"},
+                        {"id": 1, "job": "Director", "name": "Director One"},
+                        {"id": 2, "job": "Screenplay", "name": "Writer One"},
                     ],
                     "cast": [
                         {"name": "Actor One"},
@@ -172,6 +264,7 @@ def test_movie_enrichment_exposes_ui_metadata_without_extra_endpoint() -> None:
     ]
     assert result["collection"]["name"] == "Example Collection"
     assert result["directors"] == ["Director One"]
+    assert result["writers"] == ["Writer One"]
     assert result["cast"] == ["Actor One", "Actor Two", "Actor Three"]
 
 
@@ -279,6 +372,63 @@ def test_hong_kong_aliases_override_tmdb_credits_for_any_category() -> None:
     assert result["cast"] == ["Aaron Kwok", "English Name"]
 
 
+def test_hong_kong_unmatched_cjk_credit_uses_cached_tmdb_alias() -> None:
+    coordinator = _coordinator()
+
+    class Api:
+        calls = 0
+
+        async def get_person_details(self, person_id, language):
+            self.calls += 1
+            assert (person_id, language) == (42, "en-US")
+            return {
+                "name": "梁朝偉",
+                "also_known_as": ["Tony Leung Chiu-wai"],
+            }
+
+    async def enrich(self, candidate):
+        return {
+            "id": candidate["id"],
+            "directors": ["梁朝偉"],
+            "writers": [],
+            "cast": ["梁朝偉"],
+            "_credit_people": {
+                "directors": [{"id": 42, "name": "梁朝偉"}],
+                "writers": [],
+                "cast": [{"id": 42, "name": "梁朝偉"}],
+            },
+        }
+
+    coordinator.api = Api()
+    coordinator._enrich_movie = MethodType(enrich, coordinator)
+    award_item = {
+        "tmdb_id": 7,
+        "categories": ["Best Film"],
+        "recipients": [],
+        "person_aliases": {},
+    }
+
+    async def resolve_twice():
+        first = await coordinator._resolve_award_title(
+            award_item,
+            media_type="movie",
+            award_source="hong_kong_film_awards",
+        )
+        second = await coordinator._resolve_award_title(
+            award_item,
+            media_type="movie",
+            award_source="hong_kong_film_awards",
+        )
+        return first, second
+
+    first, second = asyncio.run(resolve_twice())
+
+    assert first["directors"] == ["Tony Leung Chiu-wai"]
+    assert first["cast"] == ["Tony Leung Chiu-wai"]
+    assert second["cast"] == ["Tony Leung Chiu-wai"]
+    assert coordinator.api.calls == 1
+
+
 def test_watchlist_movies_receive_cached_top_film_awards(
     monkeypatch,
 ) -> None:
@@ -382,6 +532,7 @@ def test_watchlist_movies_receive_cached_top_film_awards(
         assert "award" not in movies[0]
         await coordinator._watchlist_award_task
         await asyncio.sleep(0)
+        assert "award" not in movies[0]
         await coordinator._async_enrich_watchlist_awards(movies)
 
     asyncio.run(enrich())
@@ -411,6 +562,123 @@ def test_watchlist_movies_receive_cached_top_film_awards(
     ]
 
 
+def test_watchlist_awards_publish_successful_sources_on_partial_failure(
+    monkeypatch,
+) -> None:
+    class WorkingAdapter:
+        info = SimpleNamespace(source="oscars", label="Oscars")
+
+        async def async_categories(self, _media_type):
+            return [{"value": "BEST PICTURE", "label": "Best Picture"}]
+
+        async def async_filter_titles(self, **_kwargs):
+            return [
+                {
+                    "title": "Film",
+                    "imdb_id": "tt1234567",
+                    "award_years": [2024],
+                    "categories": ["BEST PICTURE"],
+                    "nominations": 1,
+                    "wins": 1,
+                    "winning_categories": ["BEST PICTURE"],
+                }
+            ]
+
+    class BrokenAdapter:
+        info = SimpleNamespace(source="guldbaggen", label="Guldbaggen")
+
+        async def async_categories(self, _media_type):
+            raise RuntimeError("source unavailable")
+
+    adapters = {
+        "oscars": WorkingAdapter(),
+        "guldbaggen": BrokenAdapter(),
+    }
+    monkeypatch.setattr(
+        coordinator_module,
+        "providers_for_media_type",
+        lambda _media_type: [adapter.info for adapter in adapters.values()],
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "create_adapter",
+        lambda _hass, source: adapters[source],
+    )
+    coordinator = _coordinator()
+    coordinator._watchlist_top_film_index_key = None
+    coordinator._watchlist_top_film_by_imdb = {}
+    coordinator._watchlist_top_film_by_title = {}
+
+    asyncio.run(
+        coordinator._async_build_watchlist_top_film_index(
+            (2024,)
+        )
+    )
+    movie = {
+        "imdb_id": "tt1234567",
+        "release_date": "2023-01-01",
+    }
+    coordinator._apply_watchlist_awards([movie])
+
+    assert coordinator._watchlist_top_film_index_key == (2024,)
+    assert coordinator._watchlist_award_failed_sources == {"guldbaggen"}
+    assert movie["award"]["source"] == "oscars"
+
+
+def test_discovery_profiles_publish_independently_on_failure() -> None:
+    coordinator = _coordinator()
+    coordinator.data = {"discovery_profiles": {}}
+    coordinator._discovery_profile_results = {}
+    release_slow = asyncio.Event()
+
+    async def build(self, **kwargs):
+        profile = kwargs["profiles"][0]
+        if profile["id"] == "slow":
+            await release_slow.wait()
+            raise RuntimeError("broken profile")
+        return {
+            "fast": {
+                "id": "fast",
+                "name": "Fast",
+                "items": [{"id": 1}],
+            }
+        }
+
+    coordinator._build_discovery_profiles = MethodType(build, coordinator)
+    common = {
+        "selected_ids": [],
+        "movie_provider_ids": [],
+        "tv_provider_ids": [],
+        "watchlist_ids": set(),
+        "watchlist_tv_ids": set(),
+    }
+
+    async def run_profiles() -> None:
+        slow = asyncio.create_task(
+            coordinator._async_build_and_publish_discovery_profile(
+                {"id": "slow", "name": "Slow"},
+                **common,
+            )
+        )
+        fast = asyncio.create_task(
+            coordinator._async_build_and_publish_discovery_profile(
+                {"id": "fast", "name": "Fast"},
+                **common,
+            )
+        )
+        await fast
+        assert coordinator.data["discovery_profiles"]["fast"][
+            "items"
+        ] == [{"id": 1}]
+        assert not slow.done()
+        release_slow.set()
+        await slow
+
+    asyncio.run(run_profiles())
+
+    assert "slow" not in coordinator.data["discovery_profiles"]
+
+
 def test_movie_details_append_credits_and_external_ids() -> None:
     api = object.__new__(TMDBApi)
     captured: dict[str, object] = {}
@@ -429,6 +697,26 @@ def test_movie_details_append_credits_and_external_ids() -> None:
     assert captured["params"] == {
         "language": "sv-SE",
         "append_to_response": "credits,external_ids",
+    }
+
+
+def test_person_details_requests_english_aliases() -> None:
+    api = object.__new__(TMDBApi)
+    captured: dict[str, object] = {}
+
+    async def request(self, method, path, **kwargs):
+        captured.update({"method": method, "path": path, **kwargs})
+        return {}
+
+    api._request = MethodType(request, api)
+
+    asyncio.run(api.get_person_details(42))
+
+    assert captured == {
+        "method": "GET",
+        "path": "/person/42",
+        "params": {"language": "en-US"},
+        "include_session": False,
     }
 
 

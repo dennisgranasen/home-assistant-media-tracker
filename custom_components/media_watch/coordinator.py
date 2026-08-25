@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import unicodedata
 from datetime import date, timedelta
 from typing import Any
@@ -108,6 +109,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._profile_language: str | None = None
         self._profile_region: str | None = None
         self._award_tmdb_cache: dict[str, dict[str, Any] | None] = {}
+        self._english_person_name_cache: dict[int, str | None] = {}
+        self._english_person_name_retry_after: dict[int, float] = {}
         self._watchlist_top_film_index_key: tuple[int, ...] | None = None
         self._watchlist_top_film_by_imdb: dict[
             str, list[dict[str, Any]]
@@ -116,8 +119,19 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             str, list[dict[str, Any]]
         ] = {}
         self._watchlist_award_task: asyncio.Task[None] | None = None
+        self._watchlist_award_publish_task: asyncio.Task[None] | None = None
+        self._watchlist_award_publish_pending = False
+        self._watchlist_award_failed_sources: set[str] = set()
+        self._watchlist_award_retry_after = 0.0
         self._deferred_refresh_task: asyncio.Task[None] | None = None
         self._defer_discovery_profiles = True
+        self._discovery_profile_tasks: dict[
+            str, asyncio.Task[None]
+        ] = {}
+        self._discovery_profile_results: dict[
+            str, dict[str, Any]
+        ] = {}
+        self._discovery_profile_last_scheduled: dict[str, float] = {}
 
     def _option(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
@@ -189,8 +203,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if region:
             self._profile_region = str(region)
 
-    @staticmethod
     def _localized_field(
+        self,
         primary: dict[str, Any],
         fallback: dict[str, Any] | None,
         field: str,
@@ -213,6 +227,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 original_field
                 and fallback
                 and primary_value == primary.get(original_field)
+                and str(primary.get("original_language") or "").casefold()
+                != self.language.split("-", 1)[0].casefold()
                 and fallback_value
                 and fallback_value != fallback.get(original_field)
             ):
@@ -340,6 +356,13 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "title",
             "original_title",
         )
+        fallback_title = (
+            str(fallback.get("title") or "").strip()
+            if fallback
+            else ""
+        )
+        if not fallback_title or fallback_title == title:
+            fallback_title = None
         overview = self._localized_field(
             details,
             fallback,
@@ -351,20 +374,37 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "tagline",
         )
         credits = details.get("credits") or {}
-        directors = []
-        for person in credits.get("crew") or []:
-            name = str(person.get("name") or "").strip()
-            if (
-                person.get("job") == "Director"
-                and name
-                and name not in directors
-            ):
-                directors.append(name)
-        cast = [
-            str(person.get("name")).strip()
+        crew = credits.get("crew") or []
+
+        def people_for_jobs(jobs: set[str]) -> list[dict[str, Any]]:
+            people: list[dict[str, Any]] = []
+            seen: set[tuple[int, str]] = set()
+            for person in crew:
+                name = str(person.get("name") or "").strip()
+                if person.get("job") not in jobs or not name:
+                    continue
+                key = (int(person.get("id") or 0), name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                people.append({"id": key[0], "name": name})
+            return people
+
+        director_people = people_for_jobs({"Director"})
+        writer_people = people_for_jobs(
+            {"Writer", "Screenplay", "Story"}
+        )
+        cast_people = [
+            {
+                "id": int(person.get("id") or 0),
+                "name": str(person.get("name") or "").strip(),
+            }
             for person in (credits.get("cast") or [])
             if person.get("name")
         ][:3]
+        directors = [person["name"] for person in director_people]
+        writers = [person["name"] for person in writer_people]
+        cast = [person["name"] for person in cast_people]
         production_countries = [
             {
                 "code": country.get("iso_3166_1"),
@@ -390,6 +430,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {
             "id": tmdb_id,
             "title": title,
+            "fallback_title": fallback_title,
             "original_title": details.get(
                 "original_title",
                 movie.get("original_title"),
@@ -414,7 +455,13 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "production_countries": production_countries,
             "collection": collection,
             "directors": directors,
+            "writers": writers,
             "cast": cast,
+            "_credit_people": {
+                "directors": director_people,
+                "writers": writer_people,
+                "cast": cast_people,
+            },
             "poster_path": details.get(
                 "poster_path",
                 movie.get("poster_path"),
@@ -467,7 +514,16 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not award_years:
             award_years = (dt_util.now().year,)
 
-        if self._watchlist_top_film_index_key != award_years:
+        index_matches = self._watchlist_top_film_index_key == award_years
+        if index_matches:
+            self._apply_watchlist_awards(movies)
+
+        retry_due = (
+            self._watchlist_award_failed_sources
+            and asyncio.get_running_loop().time()
+            >= self._watchlist_award_retry_after
+        )
+        if not index_matches or retry_due:
             if (
                 self._watchlist_award_task is None
                 or self._watchlist_award_task.done()
@@ -483,21 +539,17 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._watchlist_award_task.add_done_callback(
                     lambda task: self._watchlist_awards_loaded(
                         task,
-                        movies,
                         award_years,
                     )
                 )
             return
 
-        self._apply_watchlist_awards(movies)
-
     def _watchlist_awards_loaded(
         self,
         task: asyncio.Task[None],
-        movies: list[dict[str, Any]],
         award_years: tuple[int, ...],
     ) -> None:
-        """Publish background-loaded awards without another full refresh."""
+        """Refresh current coordinator data after an index build finishes."""
         if task.cancelled():
             return
         if error := task.exception():
@@ -508,14 +560,34 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         if self._watchlist_top_film_index_key != award_years:
             return
-        self._apply_watchlist_awards(movies)
-        self.async_update_listeners()
+        if (
+            self._watchlist_award_publish_task is None
+            or self._watchlist_award_publish_task.done()
+        ):
+            self._watchlist_award_publish_task = (
+                self.hass.async_create_background_task(
+                    self._async_publish_watchlist_awards(),
+                    "media_watch_publish_watchlist_awards",
+                )
+            )
+        else:
+            self._watchlist_award_publish_pending = True
+
+    async def _async_publish_watchlist_awards(self) -> None:
+        """Refresh again if a newer index finishes during publication."""
+        while True:
+            self._watchlist_award_publish_pending = False
+            await self.async_refresh()
+            if not self._watchlist_award_publish_pending:
+                return
 
     def cancel_background_tasks(self) -> None:
         """Cancel coordinator-owned work when the config entry unloads."""
         for task in (
             self._watchlist_award_task,
+            self._watchlist_award_publish_task,
             self._deferred_refresh_task,
+            *self._discovery_profile_tasks.values(),
         ):
             if task is not None and not task.done():
                 task.cancel()
@@ -595,7 +667,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         by_imdb: dict[str, list[dict[str, Any]]] = {}
         by_title: dict[str, list[dict[str, Any]]] = {}
         ranges = self._award_year_ranges(award_years)
-        complete = True
+        failed_sources: set[str] = set()
 
         for info in providers_for_media_type("movie"):
             adapter = create_adapter(self.hass, info.source)
@@ -621,7 +693,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             )
                         )
             except Exception as err:  # noqa: BLE001
-                complete = False
+                failed_sources.add(info.source)
                 _LOGGER.warning(
                     "Could not load watchlist awards from %s: %s",
                     info.source,
@@ -665,10 +737,15 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self._watchlist_top_film_by_imdb = by_imdb
         self._watchlist_top_film_by_title = by_title
-        # Retry a provider-level transient failure next update. Successful
-        # HTTP and adapter results remain cached, so this is inexpensive.
-        self._watchlist_top_film_index_key = (
-            award_years if complete else None
+        # Publish successful sources even if one provider failed. Failed
+        # providers are retried on a later refresh instead of suppressing all
+        # watchlist awards or creating an immediate retry loop.
+        self._watchlist_top_film_index_key = award_years
+        self._watchlist_award_failed_sources = failed_sources
+        self._watchlist_award_retry_after = (
+            asyncio.get_running_loop().time() + 300.0
+            if failed_sources
+            else 0.0
         )
 
     @staticmethod
@@ -1434,6 +1511,92 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         result.sort(key=sort_value, reverse=reverse)
         return result
 
+    @staticmethod
+    def _contains_cjk(value: str) -> bool:
+        return bool(re.search(r"[\u3400-\u9fff]", value))
+
+    async def _english_person_name(
+        self,
+        person_id: int,
+        current_name: str,
+    ) -> str:
+        """Resolve one remaining CJK credit through cached TMDB aliases."""
+        if person_id <= 0 or not self._contains_cjk(current_name):
+            return current_name
+        if person_id in self._english_person_name_cache:
+            cached = self._english_person_name_cache[person_id]
+            if cached:
+                return cached
+            if (
+                asyncio.get_running_loop().time()
+                < self._english_person_name_retry_after.get(person_id, 0.0)
+            ):
+                return current_name
+            self._english_person_name_cache.pop(person_id, None)
+        try:
+            details = await self.api.get_person_details(
+                person_id,
+                "en-US",
+            )
+        except TMDBError as err:
+            _LOGGER.debug(
+                "Could not load English TMDB alias for person %s: %s",
+                person_id,
+                err,
+            )
+            self._english_person_name_cache[person_id] = None
+            self._english_person_name_retry_after[person_id] = (
+                asyncio.get_running_loop().time() + 300.0
+            )
+            return current_name
+
+        candidates = [
+            str(details.get("name") or "").strip(),
+            *[
+                str(alias).strip()
+                for alias in details.get("also_known_as", [])
+            ],
+        ]
+        english_name = next(
+            (
+                candidate
+                for candidate in candidates
+                if candidate
+                and re.search(r"[A-Za-z]", candidate)
+                and not self._contains_cjk(candidate)
+            ),
+            None,
+        )
+        self._english_person_name_cache[person_id] = english_name
+        self._english_person_name_retry_after.pop(person_id, None)
+        return english_name or current_name
+
+    async def _translate_hong_kong_credits(
+        self,
+        item: dict[str, Any],
+        aliases: dict[str, str],
+    ) -> None:
+        """Prefer HKFAA aliases, then query TMDB only for unmatched CJK."""
+        credit_people = item.get("_credit_people", {})
+        for field in ("directors", "writers", "cast"):
+            people = {
+                str(person.get("name") or "").strip(): int(
+                    person.get("id") or 0
+                )
+                for person in credit_people.get(field, [])
+            }
+            translated: list[str] = []
+            for raw_name in item.get(field, []):
+                original_name = str(raw_name).strip()
+                name = aliases.get(original_name, original_name)
+                if name == original_name and self._contains_cjk(name):
+                    name = await self._english_person_name(
+                        people.get(original_name, 0),
+                        original_name,
+                    )
+                translated.append(name)
+            item[field] = translated
+
 
     async def _resolve_award_title(
         self,
@@ -1535,14 +1698,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ).items()
                 if str(chinese).strip() and str(english).strip()
             }
-            item["directors"] = [
-                aliases.get(str(name).strip(), str(name).strip())
-                for name in item.get("directors", [])
-            ]
-            item["cast"] = [
-                aliases.get(str(name).strip(), str(name).strip())
-                for name in item.get("cast", [])
-            ]
+            await self._translate_hong_kong_credits(item, aliases)
         item["award"] = {
             "organization": award_item.get("organization") or award_source,
             "source": award_source,
@@ -1894,6 +2050,10 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 existing_award = awards_by_source.get(item_source)
                 if existing_award is None:
                     awards_by_source[item_source] = item_award
+                    if item_source == "hong_kong_film_awards":
+                        for field in ("directors", "writers", "cast"):
+                            if item.get(field):
+                                existing[field] = list(item[field])
                     continue
 
                 for field in (
@@ -2064,11 +2224,14 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         personalized_movies: list[dict[str, Any]],
         personalized_tv: list[dict[str, Any]],
         oscar_movies: list[dict[str, Any]],
+        profiles: list[dict[str, Any]] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Build all configured discovery queues."""
         output: dict[str, dict[str, Any]] = {}
 
-        for profile in self.discovery_profiles:
+        for profile in (
+            self.discovery_profiles if profiles is None else profiles
+        ):
             profile_id = str(profile["id"])
             name = str(profile["name"])
             media_type = str(profile.get("media_type", "movie")).lower()
@@ -2252,6 +2415,159 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         return output
 
+    def _schedule_discovery_profile_updates(
+        self,
+        *,
+        selected_ids: list[int],
+        movie_provider_ids: list[int],
+        tv_provider_ids: list[int],
+        watchlist_ids: set[int],
+        watchlist_tv_ids: set[int],
+    ) -> None:
+        """Update each discovery profile independently in the background."""
+        profiles = self.discovery_profiles
+        configured_ids = {str(profile["id"]) for profile in profiles}
+        for profile_id in set(self._discovery_profile_results) - configured_ids:
+            self._discovery_profile_results.pop(profile_id, None)
+            self._discovery_profile_last_scheduled.pop(profile_id, None)
+        for profile_id in set(self._discovery_profile_tasks) - configured_ids:
+            task = self._discovery_profile_tasks.pop(profile_id)
+            if not task.done():
+                task.cancel()
+
+        now = asyncio.get_running_loop().time()
+        for profile in profiles:
+            profile_id = str(profile["id"])
+            task = self._discovery_profile_tasks.get(profile_id)
+            if task is not None and not task.done():
+                continue
+            if (
+                now
+                - self._discovery_profile_last_scheduled.get(
+                    profile_id, 0.0
+                )
+                < 60.0
+            ):
+                continue
+            self._discovery_profile_last_scheduled[profile_id] = now
+            self._discovery_profile_tasks[profile_id] = (
+                self.hass.async_create_background_task(
+                    self._async_build_and_publish_discovery_profile(
+                        dict(profile),
+                        selected_ids=selected_ids,
+                        movie_provider_ids=movie_provider_ids,
+                        tv_provider_ids=tv_provider_ids,
+                        watchlist_ids=watchlist_ids,
+                        watchlist_tv_ids=watchlist_tv_ids,
+                    ),
+                    f"media_watch_discovery_{profile_id}",
+                )
+            )
+
+    async def _async_build_and_publish_discovery_profile(
+        self,
+        profile: dict[str, Any],
+        *,
+        selected_ids: list[int],
+        movie_provider_ids: list[int],
+        tv_provider_ids: list[int],
+        watchlist_ids: set[int],
+        watchlist_tv_ids: set[int],
+    ) -> None:
+        """Build one profile and publish it without delaying other feeds."""
+        profile_id = str(profile["id"])
+        media_type = str(profile.get("media_type", "movie")).lower()
+        source = str(
+            profile.get("source", PROFILE_SOURCE_DISCOVER)
+        ).lower()
+        candidate_limit = max(
+            50,
+            min(800, int(profile.get("limit", 30) or 30) * 4),
+        )
+        personalized_movies: list[dict[str, Any]] = []
+        personalized_tv: list[dict[str, Any]] = []
+        oscar_movies: list[dict[str, Any]] = []
+
+        try:
+            if source == PROFILE_SOURCE_PERSONALIZED:
+                if media_type == "tv":
+                    personalized_tv = await self._personalized_recommendations(
+                        media_type="tv",
+                        seed_ids=[
+                            *self.store.watched_tv,
+                            *watchlist_tv_ids,
+                        ],
+                        exclude_ids={
+                            *self.store.watched_tv,
+                            *watchlist_tv_ids,
+                        },
+                        limit=candidate_limit,
+                    )
+                else:
+                    personalized_movies = (
+                        await self._personalized_recommendations(
+                            media_type="movie",
+                            seed_ids=[
+                                *self.store.watched_movies,
+                                *watchlist_ids,
+                            ],
+                            exclude_ids={
+                                *self.store.watched_movies,
+                                *watchlist_ids,
+                            },
+                            limit=candidate_limit,
+                        )
+                    )
+
+            if (
+                str(
+                    profile.get("award_filter", PROFILE_AWARD_NONE)
+                ).lower()
+                == PROFILE_AWARD_OSCARS_BEST_PICTURE_2026
+                and media_type == "movie"
+            ):
+                oscar_movies = await self._resolve_oscar_best_picture()
+                oscar_movies = [
+                    movie
+                    for movie in oscar_movies
+                    if int(movie["id"]) not in watchlist_ids
+                    and not self.store.is_dismissed(
+                        "movie", int(movie["id"])
+                    )
+                ]
+
+            output = await self._build_discovery_profiles(
+                selected_ids=selected_ids,
+                movie_provider_ids=movie_provider_ids,
+                tv_provider_ids=tv_provider_ids,
+                watchlist_ids=watchlist_ids,
+                watchlist_tv_ids=watchlist_tv_ids,
+                personalized_movies=personalized_movies,
+                personalized_tv=personalized_tv,
+                oscar_movies=oscar_movies,
+                profiles=[profile],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Discovery profile %s failed without affecting other feeds: %s",
+                profile.get("name", profile_id),
+                err,
+            )
+            return
+
+        feed = output.get(profile_id)
+        if feed is None:
+            return
+        self._discovery_profile_results[profile_id] = feed
+        current_data = getattr(self, "data", None)
+        if isinstance(current_data, dict):
+            current_data.setdefault("discovery_profiles", {})[
+                profile_id
+            ] = feed
+            self.async_update_listeners()
+
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             defer_discovery = self._defer_discovery_profiles
@@ -2320,120 +2636,27 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 *(self._enrich_tv(show) for show in watchlist_tv)
             )
 
-            # Personalized recommendations are no longer a global feed.
-            # Build candidate pools only when a configured profile needs them.
-            profiles = (
-                [] if defer_discovery else self.discovery_profiles
+            tv_provider_ids = sorted(
+                {
+                    int(provider["provider_id"])
+                    for provider in tv_providers
+                    if provider.get("provider_id") is not None
+                }
             )
-            movie_personalized_limit = max(
-                [
-                    max(
-                        50,
-                        min(
-                            800,
-                            int(profile.get("limit", 30) or 30) * 4,
-                        ),
-                    )
-                    for profile in profiles
-                    if str(profile.get("source", "")).lower()
-                    == PROFILE_SOURCE_PERSONALIZED
-                    and str(profile.get("media_type", "movie")).lower()
-                    == "movie"
-                ],
-                default=0,
-            )
-            tv_personalized_limit = max(
-                [
-                    max(
-                        50,
-                        min(
-                            800,
-                            int(profile.get("limit", 30) or 30) * 4,
-                        ),
-                    )
-                    for profile in profiles
-                    if str(profile.get("source", "")).lower()
-                    == PROFILE_SOURCE_PERSONALIZED
-                    and str(profile.get("media_type", "movie")).lower()
-                    == "tv"
-                ],
-                default=0,
-            )
-
-            personalized_movies = (
-                await self._personalized_recommendations(
-                    media_type="movie",
-                    seed_ids=[
-                        *self.store.watched_movies,
-                        *watchlist_ids,
-                    ],
-                    exclude_ids={
-                        *self.store.watched_movies,
-                        *watchlist_ids,
-                    },
-                    limit=movie_personalized_limit,
-                )
-                if movie_personalized_limit
-                else []
-            )
-
-            personalized_tv = (
-                await self._personalized_recommendations(
-                    media_type="tv",
-                    seed_ids=[
-                        *self.store.watched_tv,
-                        *watchlist_tv_ids,
-                    ],
-                    exclude_ids={
-                        *self.store.watched_tv,
-                        *watchlist_tv_ids,
-                    },
-                    limit=tv_personalized_limit,
-                )
-                if tv_personalized_limit
-                else []
-            )
-
-            oscar_movies = (
-                await self._resolve_oscar_best_picture()
-                if not defer_discovery
-                and self._needs_legacy_oscar_movies()
-                else []
-            )
-            oscar_movies = [
-                movie
-                for movie in oscar_movies
-                if int(movie["id"]) not in watchlist_ids
-                and not self.store.is_dismissed(
-                    "movie", int(movie["id"])
-                )
-            ]
-
-            for movie in oscar_movies:
-                movie["on_watchlist"] = (
-                    int(movie["id"]) in watchlist_ids
-                )
-
-            discovery_profiles = (
-                {}
-                if defer_discovery
-                else await self._build_discovery_profiles(
+            if not defer_discovery:
+                self._schedule_discovery_profile_updates(
                     selected_ids=selected_ids,
                     movie_provider_ids=sorted(provider_catalog),
-                    tv_provider_ids=sorted(
-                        {
-                            int(provider["provider_id"])
-                            for provider in tv_providers
-                            if provider.get("provider_id") is not None
-                        }
-                    ),
+                    tv_provider_ids=tv_provider_ids,
                     watchlist_ids=watchlist_ids,
                     watchlist_tv_ids=watchlist_tv_ids,
-                    personalized_movies=personalized_movies,
-                    personalized_tv=personalized_tv,
-                    oscar_movies=oscar_movies,
                 )
-            )
+            # Keep the authoritative mapping by reference. A very fast
+            # background profile can finish while this refresh is returning;
+            # sharing the mapping prevents the returned coordinator payload
+            # from overwriting that newly published feed with a stale copy.
+            discovery_profiles = self._discovery_profile_results
+            oscar_movies: list[dict[str, Any]] = []
 
             # External award sites must never hold up entity registration.
             # This schedules an uncached watchlist index in the background;
