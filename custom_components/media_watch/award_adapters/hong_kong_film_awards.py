@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -14,6 +15,8 @@ from .web_common import (
     fetch_table_rows,
     in_year_range,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class HongKongFilmAwardsAdapter(AwardAdapter):
@@ -60,6 +63,27 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         "Best New Director",
         "Best Asian Chinese Language Film",
     ]
+
+    CHINESE_CATEGORIES = {
+        "最佳電影": "Best Film",
+        "最佳導演": "Best Director",
+        "最佳編劇": "Best Screenplay",
+        "最佳男主角": "Best Actor",
+        "最佳女主角": "Best Actress",
+        "最佳男配角": "Best Supporting Actor",
+        "最佳女配角": "Best Supporting Actress",
+        "最佳新演員": "Best New Performer",
+        "最佳攝影": "Best Cinematography",
+        "最佳剪接": "Best Film Editing",
+        "最佳美術指導": "Best Art Direction",
+        "最佳服裝造型設計": "Best Costume & Makeup Design",
+        "最佳動作設計": "Best Action Choreography",
+        "最佳原創電影音樂": "Best Original Film Score",
+        "最佳原創電影歌曲": "Best Original Film Song",
+        "最佳音響效果": "Best Sound Design",
+        "最佳視覺效果": "Best Visual Effects",
+        "新晉導演": "Best New Director",
+    }
 
     def __init__(self, hass) -> None:
         super().__init__(hass)
@@ -115,6 +139,14 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
             )
         )
 
+    @classmethod
+    def _category_name(cls, text: str) -> str | None:
+        """Normalize an English or Chinese HKFAA category heading."""
+        value = re.sub(r"\s+", " ", text).strip()
+        if cls._looks_like_english_category(value):
+            return value
+        return cls.CHINESE_CATEGORIES.get(value)
+
     @staticmethod
     def _clean_numbered(text: str) -> str:
         return re.sub(r"^\s*\d+\.\s*", "", text).strip()
@@ -162,15 +194,78 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         nominee_text: str,
         category: str,
     ) -> list[str]:
-        candidates = cls._english_chunks(nominee_text)
+        lines = [
+            re.sub(r"\s+", " ", line).strip()
+            for line in re.split(r"[\n\r]+", nominee_text)
+            if re.sub(r"\s+", " ", line).strip()
+        ]
+        if lines:
+            lines[0] = cls._clean_numbered(lines[0])
 
-        # Best Film entries often contain "Chinese title English title" with
-        # no parentheses. Prefer the final English-looking chunk.
-        if category in {
+        # Credits follow the nominee title/person lines and must never become
+        # TMDB title candidates (for example a production company ending in
+        # "Hong Kong" or "Tianjin").
+        entry_lines: list[str] = []
+        for line in lines:
+            if re.match(
+                r"^(出品|監製|聯合出品|Presented|Produced|"
+                r"Executive Producer|Co-presented)\b",
+                line,
+                re.I,
+            ):
+                break
+            entry_lines.append(line)
+        entry_text = "\n".join(entry_lines)
+
+        top_film_categories = {
             "Best Film",
             "Best Asian Chinese Language Film",
             "Best Asian Film",
-        }:
+        }
+        if category in top_film_categories and entry_lines:
+            title_line = entry_lines[0]
+            candidates = [title_line]
+            english_suffix = re.search(
+                r"([A-Z][A-Z0-9 &'’.,:!?/-]{1,119})$",
+                title_line,
+            )
+            if english_suffix:
+                english_title = english_suffix.group(1).strip()
+                if english_title and english_title != title_line:
+                    candidates.append(english_title)
+                    words = english_title.split()
+                    if (
+                        len(words) >= 3
+                        and len(words[0]) <= 4
+                        and words[0] == words[-1]
+                    ):
+                        candidates.append(" ".join(words[1:]))
+        else:
+            candidates = cls._english_chunks(entry_text)
+
+        # The earliest winner-only pages contain Chinese text only. Crew and
+        # acting winners include the film title in parentheses; Best Film is
+        # the title itself. TMDB can resolve these original-language titles.
+        if not candidates:
+            parenthesized = [
+                value.strip()
+                for value in re.findall(r"[（(]([^（）()]{1,120})[）)]", entry_text)
+                if value.strip()
+            ]
+            if parenthesized:
+                candidates.extend(parenthesized)
+            elif category in {
+                "Best Film",
+                "Best Asian Chinese Language Film",
+                "Best Asian Film",
+            }:
+                value = cls._clean_numbered(entry_text).strip()
+                if value:
+                    candidates.append(value)
+
+        # Best Film entries often contain "Chinese title English title" with
+        # no parentheses. Prefer the final English-looking chunk.
+        if category in top_film_categories:
             if candidates:
                 return candidates[-2:] if len(candidates) > 1 else candidates
 
@@ -215,8 +310,8 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
             detected_category: str | None = None
             for lines in cell_lines:
                 for value in lines:
-                    if cls._looks_like_english_category(value):
-                        detected_category = value
+                    if normalized := cls._category_name(value):
+                        detected_category = normalized
                         break
                 if detected_category:
                     break
@@ -228,11 +323,20 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                 continue
 
             # Numbered entries are nominees/candidates.
-            nominee_cells = [
-                cell
-                for cell in flat_cells
-                if re.match(r"^\s*\d+\.", cell)
-            ]
+            nominee_cells: list[str] = []
+            for lines in cell_lines:
+                current_nominee: list[str] = []
+                for line in lines:
+                    if re.match(r"^\s*\d+\.", line):
+                        if current_nominee:
+                            nominee_cells.append(
+                                "\n".join(current_nominee)
+                            )
+                        current_nominee = [line]
+                    elif current_nominee:
+                        current_nominee.append(line)
+                if current_nominee:
+                    nominee_cells.append("\n".join(current_nominee))
 
             for nominee in nominee_cells:
                 title_candidates = cls._title_candidates(
@@ -260,6 +364,30 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                 )
 
             if not nominee_cells:
+                # Early archive pages expose two-column winner-only rows in
+                # Chinese. Preserve only the explicit winner and do not infer
+                # a missing nominee slate.
+                if len(flat_cells) == 2:
+                    title_candidates = cls._title_candidates(
+                        flat_cells[1],
+                        category,
+                    )
+                    if title_candidates:
+                        records.append(
+                            {
+                                "media_type": "movie",
+                                "award_year": award_year,
+                                "ceremony": ceremony,
+                                "category": category,
+                                "title": title_candidates[-1],
+                                "title_candidates": title_candidates,
+                                "stable_key": (
+                                    f"{award_year}:"
+                                    f"{title_candidates[-1].casefold()}"
+                                ),
+                                "winner": True,
+                            }
+                        )
                 continue
 
             # The awardee is normally in a separate non-numbered table cell.
@@ -364,8 +492,8 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
 
         for line in lines:
             value = re.sub(r"\s+", " ", line).strip()
-            if cls._looks_like_english_category(value):
-                category = value
+            if normalized := cls._category_name(value):
+                category = normalized
                 numbered_seen[category] = 0
                 continue
             if not category:
@@ -409,11 +537,16 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         self,
         ceremony: int,
     ) -> list[dict[str, Any]]:
-        if ceremony in self._records_by_ceremony:
-            return self._records_by_ceremony[ceremony]
+        cached = self._records_by_ceremony.get(ceremony)
+        if cached:
+            return cached
 
         url = self._url(ceremony)
-        rows = await fetch_table_rows(self.hass, url)
+        rows = await fetch_table_rows(
+            self.hass,
+            url,
+            number_ordered_list_items=True,
+        )
         records = self._parse_rows(rows, ceremony)
 
         # Some old HKFAA pages have a much simpler layout; the plain-text
@@ -422,10 +555,17 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
             lines = await fetch_lines(self.hass, url)
             records = self._parse_lines_fallback(lines, ceremony)
 
+        if not records:
+            _LOGGER.warning(
+                "HKFAA ceremony %s returned no parseable award records",
+                ceremony,
+            )
+
         # The first ceremonies can be winner-only pages. If no numbered
         # nominees are exposed, do not manufacture nominations. They remain
         # available only to winner-oriented filters when parsable.
-        self._records_by_ceremony[ceremony] = records
+        if records:
+            self._records_by_ceremony[ceremony] = records
         return records
 
     async def async_categories(
@@ -504,9 +644,14 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                 records.extend(
                     await self._load_ceremony(ceremony)
                 )
-            except Exception:
+            except Exception as err:  # noqa: BLE001
                 # A missing/moved historical page should not break unrelated
                 # Media Watch feeds. Other ceremonies remain usable.
+                _LOGGER.warning(
+                    "Could not load HKFAA ceremony %s: %s",
+                    ceremony,
+                    err,
+                )
                 continue
 
         selected = [

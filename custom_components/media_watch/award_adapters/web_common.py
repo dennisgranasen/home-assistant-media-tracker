@@ -140,12 +140,18 @@ def in_year_range(year: int, year_from: int | None, year_to: int | None) -> bool
 class _TableTextParser(HTMLParser):
     """Extract visible text grouped into table rows/cells."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        number_ordered_list_items: bool = False,
+    ) -> None:
         super().__init__(convert_charrefs=True)
         self.rows: list[list[str]] = []
         self._row: list[str] | None = None
         self._cell_parts: list[str] | None = None
         self._cell_tag: str | None = None
+        self._number_ordered_list_items = number_ordered_list_items
+        self._ordered_list_counters: list[int] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:
         tag = tag.lower()
@@ -154,6 +160,19 @@ class _TableTextParser(HTMLParser):
         elif tag in {"td", "th"} and self._row is not None:
             self._cell_parts = []
             self._cell_tag = tag
+            self._ordered_list_counters = []
+        elif tag == "ol" and self._cell_parts is not None:
+            self._ordered_list_counters.append(0)
+        elif tag == "li" and self._cell_parts is not None:
+            self._cell_parts.append("\n")
+            if (
+                self._number_ordered_list_items
+                and self._ordered_list_counters
+            ):
+                self._ordered_list_counters[-1] += 1
+                self._cell_parts.append(
+                    f"{self._ordered_list_counters[-1]}. "
+                )
         elif tag == "br" and self._cell_parts is not None:
             self._cell_parts.append("\n")
 
@@ -170,6 +189,11 @@ class _TableTextParser(HTMLParser):
             self._row.append(text)
             self._cell_parts = None
             self._cell_tag = None
+            self._ordered_list_counters = []
+        elif tag == "li" and self._cell_parts is not None:
+            self._cell_parts.append("\n")
+        elif tag == "ol" and self._ordered_list_counters:
+            self._ordered_list_counters.pop()
         elif tag == "tr" and self._row is not None:
             if any(cell.strip() for cell in self._row):
                 self.rows.append(self._row)
@@ -180,9 +204,15 @@ class _TableTextParser(HTMLParser):
             self._cell_parts.append(data)
 
 
-async def fetch_table_rows(hass, url: str) -> list[list[str]]:
+async def fetch_table_rows(
+    hass,
+    url: str,
+    *,
+    number_ordered_list_items: bool = False,
+) -> list[list[str]]:
     """Fetch and cache an HTML page parsed into table rows."""
-    key = f"table:{url}"
+    cache_variant = "numbered" if number_ordered_list_items else "plain"
+    key = f"table:{cache_variant}:{url}"
     cache = hass.data.setdefault("media_watch_award_http_cache", {})
     if key in cache:
         return [list(row) for row in cache[key]]
@@ -192,7 +222,9 @@ async def fetch_table_rows(hass, url: str) -> list[list[str]]:
         response.raise_for_status()
         text = await response.text()
 
-    parser = _TableTextParser()
+    parser = _TableTextParser(
+        number_ordered_list_items=number_ordered_list_items
+    )
     parser.feed(text)
     cache[key] = [list(row) for row in parser.rows]
     return parser.rows
