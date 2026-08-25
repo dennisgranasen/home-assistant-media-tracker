@@ -35,8 +35,16 @@ class _Store:
 def _coordinator() -> MediaWatchCoordinator:
     coordinator = object.__new__(MediaWatchCoordinator)
     coordinator.store = _Store()
-    coordinator.hass = SimpleNamespace(data={})
+    coordinator.hass = SimpleNamespace(
+        data={},
+        async_create_task=lambda coro, *, name=None: asyncio.create_task(
+            coro,
+            name=name,
+        ),
+    )
     coordinator._award_tmdb_cache = {}
+    coordinator._watchlist_award_task = None
+    coordinator.async_update_listeners = lambda: None
     return coordinator
 
 
@@ -337,8 +345,14 @@ def test_watchlist_movies_receive_cached_top_film_awards(
         },
     ]
 
-    asyncio.run(coordinator._async_enrich_watchlist_awards(movies))
-    asyncio.run(coordinator._async_enrich_watchlist_awards(movies))
+    async def enrich() -> None:
+        await coordinator._async_enrich_watchlist_awards(movies)
+        assert "award" not in movies[0]
+        await coordinator._watchlist_award_task
+        await asyncio.sleep(0)
+        await coordinator._async_enrich_watchlist_awards(movies)
+
+    asyncio.run(enrich())
 
     assert len(calls) == 2
     assert movies[0]["award"]["source"] == "any"

@@ -115,6 +115,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._watchlist_top_film_by_title: dict[
             str, list[dict[str, Any]]
         ] = {}
+        self._watchlist_award_task: asyncio.Task[None] | None = None
+        self._defer_discovery_profiles = True
 
     def _option(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
@@ -465,7 +467,60 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             award_years = (dt_util.now().year,)
 
         if self._watchlist_top_film_index_key != award_years:
-            await self._async_build_watchlist_top_film_index(award_years)
+            if (
+                self._watchlist_award_task is None
+                or self._watchlist_award_task.done()
+            ):
+                self._watchlist_award_task = self.hass.async_create_task(
+                    self._async_build_watchlist_top_film_index(
+                        award_years
+                    ),
+                    name="media_watch_watchlist_awards",
+                )
+                self._watchlist_award_task.add_done_callback(
+                    lambda task: self._watchlist_awards_loaded(
+                        task,
+                        movies,
+                        award_years,
+                    )
+                )
+            return
+
+        self._apply_watchlist_awards(movies)
+
+    def _watchlist_awards_loaded(
+        self,
+        task: asyncio.Task[None],
+        movies: list[dict[str, Any]],
+        award_years: tuple[int, ...],
+    ) -> None:
+        """Publish background-loaded awards without another full refresh."""
+        if task.cancelled():
+            return
+        if error := task.exception():
+            _LOGGER.warning(
+                "Could not build the watchlist award index: %s",
+                error,
+            )
+            return
+        if self._watchlist_top_film_index_key != award_years:
+            return
+        self._apply_watchlist_awards(movies)
+        self.async_update_listeners()
+
+    def cancel_background_tasks(self) -> None:
+        """Cancel coordinator-owned work when the config entry unloads."""
+        if (
+            self._watchlist_award_task is not None
+            and not self._watchlist_award_task.done()
+        ):
+            self._watchlist_award_task.cancel()
+
+    def _apply_watchlist_awards(
+        self,
+        movies: list[dict[str, Any]],
+    ) -> None:
+        """Apply the already loaded award index to watchlist items."""
 
         for movie in movies:
             imdb_id = str(movie.get("imdb_id") or "")
@@ -2179,6 +2234,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
+            defer_discovery = self._defer_discovery_profiles
             account_id = int(self.entry.data[CONF_ACCOUNT_ID])
 
             if self.use_profile_language:
@@ -2240,14 +2296,15 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             movie_details = await asyncio.gather(
                 *(self._enrich_movie(movie) for movie in visible_watchlist)
             )
-            await self._async_enrich_watchlist_awards(movie_details)
             tv_details = await asyncio.gather(
                 *(self._enrich_tv(show) for show in watchlist_tv)
             )
 
             # Personalized recommendations are no longer a global feed.
             # Build candidate pools only when a configured profile needs them.
-            profiles = self.discovery_profiles
+            profiles = (
+                [] if defer_discovery else self.discovery_profiles
+            )
             movie_personalized_limit = max(
                 [
                     max(
@@ -2319,7 +2376,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             oscar_movies = (
                 await self._resolve_oscar_best_picture()
-                if self._needs_legacy_oscar_movies()
+                if not defer_discovery
+                and self._needs_legacy_oscar_movies()
                 else []
             )
             oscar_movies = [
@@ -2336,22 +2394,32 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     int(movie["id"]) in watchlist_ids
                 )
 
-            discovery_profiles = await self._build_discovery_profiles(
-                selected_ids=selected_ids,
-                movie_provider_ids=sorted(provider_catalog),
-                tv_provider_ids=sorted(
-                    {
-                        int(provider["provider_id"])
-                        for provider in tv_providers
-                        if provider.get("provider_id") is not None
-                    }
-                ),
-                watchlist_ids=watchlist_ids,
-                watchlist_tv_ids=watchlist_tv_ids,
-                personalized_movies=personalized_movies,
-                personalized_tv=personalized_tv,
-                oscar_movies=oscar_movies,
+            discovery_profiles = (
+                {}
+                if defer_discovery
+                else await self._build_discovery_profiles(
+                    selected_ids=selected_ids,
+                    movie_provider_ids=sorted(provider_catalog),
+                    tv_provider_ids=sorted(
+                        {
+                            int(provider["provider_id"])
+                            for provider in tv_providers
+                            if provider.get("provider_id") is not None
+                        }
+                    ),
+                    watchlist_ids=watchlist_ids,
+                    watchlist_tv_ids=watchlist_tv_ids,
+                    personalized_movies=personalized_movies,
+                    personalized_tv=personalized_tv,
+                    oscar_movies=oscar_movies,
+                )
             )
+
+            # External award sites must never hold up entity registration.
+            # This schedules an uncached watchlist index in the background;
+            # cached facts are applied synchronously on later refreshes.
+            if not defer_discovery:
+                await self._async_enrich_watchlist_awards(movie_details)
 
             global_next_episodes: list[dict[str, Any]] = []
 
@@ -2438,7 +2506,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if today_iso <= (item.get("air_date") or "") <= month_end
             ]
 
-            return {
+            result = {
                 "movie_watchlist": movie_details,
                 "following_tv": tv_details,
                 "upcoming_episodes_all": global_upcoming,
@@ -2455,6 +2523,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "watched_movies": self.store.watched_movies,
                 "dismissed_movies": self.store.dismissed_movies,
             }
+            self._defer_discovery_profiles = False
+            return result
 
         except TMDBError as err:
             raise UpdateFailed(

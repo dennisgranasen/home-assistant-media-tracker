@@ -158,6 +158,15 @@ async def async_setup_entry(
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # The first refresh intentionally loads only core watchlist/TV data so
+    # entity registration is not held up by external discovery/award sites.
+    # Populate those feeds immediately after the entities are available.
+    deferred_refresh = hass.async_create_task(
+        coordinator.async_request_refresh(),
+        name="media_watch_deferred_discovery",
+    )
+    entry.async_on_unload(deferred_refresh.cancel)
+
     def schedule_refresh() -> None:
         """Refresh coordinator data without blocking a user action."""
         hass.async_create_task(coordinator.async_request_refresh())
@@ -473,6 +482,9 @@ async def async_unload_entry(
         entry, PLATFORMS
     )
     if unloaded:
+        entry_data = hass.data[DOMAIN].get(entry.entry_id)
+        if entry_data is not None:
+            entry_data["coordinator"].cancel_background_tasks()
         hass.data[DOMAIN].pop(entry.entry_id, None)
 
         if not hass.data[DOMAIN]:
