@@ -39,6 +39,12 @@ def providers_for_media_type(media_type: str) -> list[AwardAdapterInfo]:
     )
 
 
+def label_for_source(source: str) -> str:
+    """Return the human-readable label registered for an award source."""
+    adapter_type = ADAPTER_TYPES.get(source)
+    return adapter_type.info.label if adapter_type is not None else source
+
+
 def create_adapter(hass, source: str) -> AwardAdapter | None:
     adapter_type = ADAPTER_TYPES.get(source)
     if adapter_type is None:

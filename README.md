@@ -5,20 +5,22 @@ A HACS-installable Home Assistant custom integration for tracking movies and TV 
 ## Current features
 
 - Authenticate a TMDB account using TMDB's user session flow.
-- Search TMDB directly from a Home Assistant response action.
-- Follow/unfollow TV shows and add/remove movies from the TMDB watchlist directly from Home Assistant.
-- Read movie and TV watchlists from TMDB.
-- Treat TV shows on the TMDB watchlist as followed shows.
-- Expose the next episode to air for followed shows.
-- Track TV progress locally and expose the next unwatched episode to watch.
-- Aggregate scheduled episodes across all followed shows by release date.
-- Expose default next-N, today, next-7-days and next-30-days episode sensors.
-- Mark individual episodes, selected seasons, or all regular seasons as watched.
-- Discover highly rated movies available from selected streaming providers in a configured region.
-- Store `watched` and `dismissed` state locally in Home Assistant.
-- Marking an item watched removes it from the TMDB watchlist and keeps the local watched history so it is not rediscovered.
-- Configure your subscribed TMDB providers, minimum rating, vote threshold and discovery limit in the UI.
-- Media availability attributes expose all TMDB streaming providers for the configured region; your provider selection only controls discovery and `available_on_my_services`.
+- Use the TMDB movie watchlist as the movie queue and the TMDB TV watchlist as
+  the list of followed shows.
+- Search, follow, remove, dismiss, mark watched and restore media through Home
+  Assistant actions.
+- Track movie/TV watched state and per-episode TV progress locally.
+- Create any number of movie or TV discovery profiles, each with its own sensor.
+- Build general TMDB discovery, personalized recommendation and historical
+  award queues.
+- Filter profiles by providers, rating, votes, genres, release year, rolling
+  age, sort order and queue size.
+- Query one award organization or combine all compatible organizations with
+  **Any award organization**.
+- Expose localized titles, English fallback titles, credits, streaming
+  availability, award facts and UI-ready badges in feed attributes.
+- Start core entities before slow discovery/award work and update discovery
+  profiles independently in the background.
 
 ## Installation with HACS
 
@@ -37,9 +39,107 @@ Create an API Read Access Token in your TMDB account under **Settings > API**.
 
 During Home Assistant setup, Media Watch creates a TMDB request token and shows an authorization URL. Approve it while logged in to TMDB, then return to Home Assistant and submit the form. Media Watch will create and store a TMDB user session.
 
+## Configuration
+
+Open **Settings → Devices & services → Media Watch → Configure**.
+
+Shared options:
+
+- **Use TMDB profile language**: use the authenticated account locale when it
+  is available.
+- **Language**: manual TMDB locale, for example `sv-SE`, used when profile
+  language is disabled or unavailable.
+- **Fallback language**: secondary metadata locale; defaults to `en-US`.
+- **Region**: TMDB watch-provider region, for example `SE`.
+- **Streaming providers**: subscriptions used by the **My providers** profile
+  scope and `available_on_my_services`.
+- **Upcoming limit**: number of episodes in the default next-upcoming feed.
+
+Rating, genre, release-year, provider-depth and queue-size settings are not
+global. They belong to each discovery profile.
+
+### Discovery profiles
+
+Under **Configure → Discovery profiles**, choose **Add profile**, **Edit** or
+**Delete**. Creating or editing a profile has four stages:
+
+1. Name, movie/TV media type and source: general discovery or personalized.
+2. Optional award organization.
+3. Award preset, category, status and award-year range when awards are enabled.
+4. Provider, watched, rating, genre, release-year, sorting, page-depth and
+   result-limit filters.
+
+Each saved profile creates one sensor with a stable unique ID and an entity-ID
+suggestion based on the profile ID, for example
+`sensor.media_watch_modern_horror`. The sensor state is the number of items;
+the actual queue is in its `items` attribute.
+
+Profile filters:
+
+- **Provider scope**: every streaming provider in the configured region, or
+  only the subscriptions selected in the shared options.
+- **Exclude watched titles**: enabled by default. Disable it to retain watched
+  titles with `watched: true` for UI-side filtering or unmarking.
+- **Minimum rating / votes**: TMDB vote thresholds.
+- **Include / exclude genres**: localized TMDB multi-select lists. Included
+  genres can match any or all selected values.
+- **Release year from / to**: absolute year bounds.
+- **Maximum age in years**: rolling lower bound. In 2026, `5` means 2021 and
+  newer; the bound advances automatically each year.
+- **Sort order**: popularity, rating, votes, newest or oldest.
+- **TMDB pages**: 1–20 source pages.
+- **Limit**: 1–200 visible items.
+
+Award years, release years and maximum age use numeric selectors. Empty values
+are genuinely optional and remain valid when an existing profile is edited.
+
+The integration resolves additional candidates until it has filled the limit
+after exclusions where the backing source contains enough results. Movies or
+shows already on the corresponding TMDB watchlist, and locally dismissed
+titles, never appear in discovery profiles. Watched titles are also excluded
+unless **Exclude watched titles** is explicitly disabled.
+
+### Award profiles
+
+Registered award sources:
+
+| Source | Movies | TV |
+|---|:---:|:---:|
+| Academy Awards (Oscars) | Yes | |
+| Guldbaggen | Yes | |
+| BAFTA Film Awards | Yes | |
+| BAFTA Television Awards | | Yes |
+| Golden Globes – Film | Yes | |
+| Golden Globes – Television | | Yes |
+| Primetime Emmy Awards | | Yes |
+| Festival de Cannes | Yes | |
+| Hong Kong Film Awards | Yes | |
+
+**Any award organization** queries every registered adapter compatible with
+the selected media type. Its generic categories—such as Best Film, Director
+or Screenplay—are mapped to each organization's own category vocabulary. When
+one organization is selected, the category list comes directly from that
+adapter.
+
+Available presets are custom, latest winners, latest nominees/selections,
+all top-film-category winners and all top-film-category nominees. Status can
+be nominated or winner, winner only, nominated without a win, or nominated
+and winner. Status is evaluated within the selected category rather than from
+unrelated wins for the same film.
+
+Award items expose `award`; combined results also expose `awards`. The compact
+`award_summary` contains totals, winner state, organizations, years,
+categories, winning categories, recipients and badge metadata. Organization
+source IDs are retained for stable logic, while display fields use registered
+labels such as `Golden Globes – Film` and `Hong Kong Film Awards`.
+
+Top-film awards from all compatible movie adapters are also attached to films
+after they move into the Watchlist. A failure in one adapter does not suppress
+facts from the others.
+
 ## Entities
 
-The initial release creates:
+Every entry creates these core sensors:
 
 - `sensor.media_watch_movie_watchlist`
 - `sensor.media_watch_following_tv`
@@ -49,8 +149,13 @@ The initial release creates:
 - `sensor.media_watch_episodes_today`
 - `sensor.media_watch_episodes_next_7_days`
 - `sensor.media_watch_episodes_next_30_days`
-- `sensor.media_watch_upcoming_media_card` (Upcoming Media Card compatibility feed)
-- `sensor.media_watch_movie_discovery`
+- `sensor.media_watch_episodes` (`items` feed)
+- `sensor.media_watch_watchlist` (`items` feed)
+- `sensor.media_watch_upcoming_media_card` (compatibility feed)
+
+In addition, every discovery profile creates one `items` feed sensor. There is
+no fixed global discovery, personalized or Oscars sensor in the current
+profile-only model.
 
 Actual entity IDs can differ if Home Assistant needs to resolve naming conflicts.
 
@@ -74,6 +179,11 @@ Available actions:
 - `media_watch.mark_unwatched`
 - `media_watch.dismiss`
 - `media_watch.undismiss`
+- `media_watch.mark_episode_watched`
+- `media_watch.mark_episode_unwatched`
+- `media_watch.mark_seasons_watched`
+- `media_watch.mark_seasons_unwatched`
+- `media_watch.upcoming_episodes` (returns response data)
 - `media_watch.refresh`
 
 Search example:
@@ -99,21 +209,70 @@ data:
 For TV, the TMDB watchlist is Media Watch's source of truth for followed
 shows. For movies, it is the wanted/watchlist queue.
 
-## Scope of v0.5.x
+`follow` also clears local watched/dismissed state so the title becomes visible
+again. `unfollow` removes a movie or show from TMDB without marking it watched.
+`mark_watched` records local watched state and removes the title from TMDB.
+`dismiss` only hides it from Media Watch discovery.
 
-This is intentionally the foundation release. Planned work includes:
+## Feed data
 
-- Search and Follow/Watchlist controls directly from Home Assistant.
-- A dedicated Lovelace card with posters and buttons.
-- Per-episode watched state.
-- Notifications when tracked media becomes available.
-- Better Swedish streaming availability handling.
-- Award/Oscar based discovery.
-- Optional import from other watchlist sources when a stable API is available.
+The dedicated Watchlist, Episodes and discovery-profile sensors use one common
+`items` attribute. Their numeric sensor state is the item count.
+
+Movie items can contain:
+
+- identity: `tmdb_id`, `imdb_id`, `media_type`, `source`
+- titles: localized `title`, fallback-language `fallback_title`, and TMDB
+  `original_title`
+- release and popularity: `release_date`, `vote_average`, `vote_count`
+- descriptive metadata: `overview`, `tagline`, `runtime`, genres, production
+  countries and collection/franchise
+- credits: `directors`, `writers` and the first three credited cast members
+- artwork and links: `poster`, `deep_link`
+- availability: `providers`, `provider_details`,
+  `available_on_my_services`
+- local state: `watched` and, where relevant, `dismissed`
+- awards: `award`, optional `awards`, and `award_summary`
+
+For a Swedish-language configuration, a Swedish original such as
+`Utvandrarna` remains the primary `title`; `The Emigrants` is exposed as
+`fallback_title`. A translated Swedish title such as `Konklaven` is likewise
+primary while `Conclave` is the fallback. This logic is shared by Watchlist
+and every movie discovery profile; it does not depend on which queue found the
+film.
+
+Episode feed items include the show title and TMDB ID, season and episode
+numbers, episode code/name, air date, runtime, overview, poster, providers and
+TMDB link.
+
+Hong Kong Film Awards records use official English person aliases when the
+archive supplies them. Remaining Chinese director, writer and cast names are
+resolved through cached English TMDB aliases when available.
+
+## Queue and refresh behavior
+
+- Core watchlist and TV entities are registered on the first refresh. Slow
+  discovery and external award work starts afterward in Home Assistant
+  background tasks.
+- Discovery profiles are built and published independently. A slow or failing
+  profile does not hold back successful queues, and the last successful result
+  remains available across a later profile failure.
+- Coordinator data refreshes every three hours and can also be refreshed with
+  `media_watch.refresh`.
+- TMDB requests are limited to four concurrent calls. HTTP 429 responses are
+  retried up to three times, honoring `Retry-After` when TMDB provides it.
+- Parsed award pages and adapter instances have a six-hour in-memory lifetime.
+  They are cleared when the last Media Watch entry unloads.
+- Watchlist award enrichment runs in the background. Successful award sources
+  are published even if another adapter fails and is scheduled for retry.
 
 ## Data sources
 
 Movie, TV and watch-provider metadata is supplied by TMDB. TMDB watch-provider data is powered by JustWatch.
+
+Award history comes from the registered adapters' datasets or official
+organization archives. See [AWARD_ADAPTERS.md](AWARD_ADAPTERS.md) for the
+adapter contract and source-specific implementation notes.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 
@@ -230,8 +389,11 @@ enable_tooltips: true
 url: https://www.themoviedb.org/tv/$tmdb_id
 ```
 
-The compatibility sensor exposes releases from the next 30 days and includes
-TMDB posters, episode code/title, air date, provider information and TMDB ID.
+The compatibility sensor exposes the configured number of next scheduled
+episodes (one current next-to-air entry per followed show), sorted by air date.
+It includes TMDB posters, episode code/title, provider information and TMDB ID.
+The separate today, 7-day and 30-day sensors are calendar windows and can
+contain more than one episode from the same show.
 
 The integration itself does not bundle or copy Upcoming Media Card. It only
 produces its expected sensor data format, keeping the projects independently
@@ -240,604 +402,29 @@ updatable through HACS.
 
 ## Media Tracker Card
 
-The compatibility feed also exposes structured `season`, `episode_number` and
-`provider_details` data for the companion `media-tracker-card`, including TMDB
-provider `logo_path` values for provider logos and action parameters.
+Use `sensor.media_watch_episodes`, `sensor.media_watch_watchlist` and the
+individual discovery-profile sensors as companion `media-tracker-card` feeds.
+All expose `items` with provider IDs/logo paths and the action parameters
+needed by the card.
 
-### v0.5.3 upcoming behavior
+The card is maintained in a separate repository and is not bundled with this
+integration. Presentation-only filtering belongs in the card; queue
+membership, watchlist/dismissed exclusion and profile filters are handled by
+this integration.
 
-The main `next upcoming episodes` feed and Upcoming Media Card compatibility
-sensor now use each followed show's `next_episode_to_air` without a 30-day
-cutoff. The configured `upcoming_limit` (default 5) controls how many are
-shown. The today / 7-day / 30-day sensors remain time-windowed.
+## Local testing without Home Assistant
 
+The repository includes isolated tests with minimal Home Assistant stubs, so
+most coordinator, award-adapter, parser and configuration consistency checks
+can run without starting a Home Assistant instance:
 
-### v0.6.0 card feed
-
-`sensor.media_watch_upcoming_media_card` now exposes three sections for the
-companion card:
-
-- `upcoming_episodes`
-- `watchlist_movies`
-- `discovery_movies`
-
-The legacy `data` TV attribute remains available for compatibility.
-
-
-### v0.7.0 generic feeds
-
-The companion card now has three dedicated entities. Each exposes one common
-`items` attribute:
-
-- `sensor.media_watch_episodes`
-- `sensor.media_watch_watchlist`
-- `sensor.media_watch_discovery`
-
-`sensor.media_watch_episodes` is a **watch queue**, not a release calendar.
-It exposes the first locally unwatched episode of every followed TV show.
-Therefore a show with no recorded progress starts at S01E01 even when TMDB
-already lists a future season as the next episode to air.
-
-The existing today / 7-day / 30-day sensors remain release-calendar views.
-
-Discovery also excludes movies that are already on the TMDB watchlist, so
-using `media_watch.follow` moves a discovery movie to the watchlist feed on
-the next coordinator refresh.
-
-
-### v0.8.0 language handling
-
-Media Watch now uses the primary language/country returned by the authenticated
-TMDB account by default. Movie watchlist and discovery items are re-fetched
-through the movie-details endpoint in that locale instead of trusting the
-language of the discover/watchlist payload.
-
-TMDB's website has a separate **Fallback Language** profile setting, but the
-public account API does not expose that setting. Media Watch therefore has a
-`Fallback language` option (default `en-US`). Metadata resolution is:
-
-1. TMDB profile language (or manual language override)
-2. Media Watch fallback language
-3. TMDB original-language metadata
-
-The fallback is field-aware: a missing localized overview can fall back while
-a localized title remains in the primary language.
-
-
-### v0.9.0 provider filtering
-
-Watchlist and Discovery feeds now keep the information needed for frontend
-provider filtering.
-
-Discovery is generated across all TMDB streaming providers available in the
-configured region. Each enriched movie still exposes
-`available_on_my_services`, so `media-tracker-card` can choose between:
-
-- all regional streaming services
-- only the user's selected providers
-
-The TMDB movie watchlist itself is never modified by this display filter.
-
-
-### v0.10.0 Oscars feed
-
-A new `sensor.media_watch_oscars` exposes the latest Academy Awards Best
-Picture slate using the same `items` feed contract as the other companion-card
-sensors.
-
-The initial feed contains the 98th Academy Awards (2026) Best Picture nominees,
-with the winner identified separately. The Academy list is treated as the
-award authority; TMDB is used to resolve localized media metadata and Swedish
-streaming availability.
-
-Watched and dismissed films are excluded. Movies already on the TMDB watchlist
-are also excluded from award/discovery queues and remain available through the
-dedicated watchlist feed.
-
-
-### v0.11.0 discovery profiles
-
-New feeds:
-
-- `sensor.media_watch_discovery` — general well-rated movie discovery
-- `sensor.media_watch_personalized_movies` — recommendations aggregated from
-  movie watchlist + locally watched movies
-- `sensor.media_watch_discovery_tv` — general well-rated TV discovery
-- `sensor.media_watch_personalized_tv` — recommendations aggregated from
-  followed/watchlisted + locally watched TV shows
-
-Discovery items expose localized `genres` and `genre_ids`. Genre selection is
-a presentation/feed filter in Media Tracker Card so the same backend feed can
-power several cards with different include/exclude rules.
-
-Personalized ranking counts how many seed titles recommend the same candidate
-and also weights higher-ranked recommendations. Watched, dismissed and already
-watchlisted/followed titles are excluded.
-
-
-### v0.12.0 backend discovery filtering
-
-Discovery can now be constrained directly in the TMDB discover query.
-
-Options:
-
-- **Discovery provider scope**
-  - `all`: all streaming providers in the configured region
-  - `my`: only providers selected in Media Watch
-- **Discovery pages**: 1–20 TMDB pages fetched before local filtering
-- **Backend include genres**: comma-separated TMDB genre IDs
-- **Backend exclude genres**: comma-separated TMDB genre IDs
-- **Backend genre matching**: `any` or `all`
-
-Backend filtering applies to both movie and TV general discovery feeds. The
-card's interactive mood/provider/genre filters remain available as a second,
-fast presentation-layer filter.
-
-Example: fetch a much larger Sci-Fi/Fantasy candidate pool from TMDB:
-
-```text
-Discovery provider scope: all
-Discovery pages: 15
-Backend include genres: 878,14
-Backend genre matching: any
+```bash
+python3 -m pytest -q
+python3 scripts/check_service_registrations.py
 ```
 
-
-### v0.12.1 discovery genre feed fix
-
-Fixed `sensor.media_watch_discovery` dropping `genre_ids` and `genres` from
-its `items` attribute. The coordinator already had the data, but the feed
-adapter omitted it, causing every card-side mood/genre filter to return an
-empty list.
-
-
-### v0.12.2 responsive actions
-
-Media Watch service actions no longer block while a full coordinator refresh
-runs. The durable local/TMDB mutation is completed first, then the expensive
-coordinator refresh is scheduled in the background.
-
-This is especially important now that a refresh can include movie/TV
-discovery, personalized recommendations, provider metadata and Oscars data.
-
-
-### v0.13.0 dynamic discovery profiles
-
-Discovery is no longer limited to one global queue. Add any number of named
-profiles under **Options → Discovery profiles**. Every profile becomes its own
-sensor and uses the common `items` feed contract.
-
-Profile filters include:
-
-- movie or TV
-- general discovery or personalized recommendations
-- awards filter (currently Oscars 2026 Best Picture)
-- all regional providers or only selected providers
-- minimum TMDB rating and vote count
-- include/exclude TMDB genre IDs with ANY/ALL matching
-- release date range
-- sort order
-- TMDB page depth and feed size
-
-Examples:
-
-- `Oscar Rom-Coms`: movie + Oscars + Comedy/Romance (ALL) + rating >= 5
-- `Modern Horror`: movie + Horror + released >= 2020-01-01
-- `Top Rated`: movie + rating >= 8.5 + rating sort
-
-Sensors use the profile name and a stable unique ID based on the profile ID.
-Changing options reloads the integration so newly added/removed profile
-entities are created/removed automatically.
-
-The older fixed discovery sensors remain for backwards compatibility.
-
-
-### v0.14.0 historical awards filters
-
-Dynamic discovery profiles can now use the full Academy Awards history rather
-than a single hard-coded ceremony.
-
-Oscar data is loaded from `DLu/oscar_data`, a curated dataset derived from the
-official Academy Awards Database and containing IMDb title IDs. Media Watch
-uses those IMDb IDs to resolve films through TMDB and then applies the normal
-language, provider, genre and rating enrichment.
-
-Award profile fields:
-
-- **Awards**: none / Academy Awards (Oscars)
-- **Awards quick list**:
-  - latest Oscars – all winners
-  - latest Oscars – all nominated films
-  - all Best Picture winners
-  - all Best Picture nominees
-  - custom
-- **Award category**: canonical Academy category, e.g. `BEST PICTURE`, or `all`
-- **Award status**:
-  - nominated or winner
-  - winner
-  - nominated, no win
-  - nominated + at least one win
-- **Award year from / to**
-
-Award results are collapsed to films before filtering. This enables queries
-such as:
-
-- every Oscar-nominated film from 2001 onward
-- every film from 1980–1994 that was nominated and won at least one Oscar
-- all Best Picture winners, further filtered by streaming provider
-- Oscar-nominated Romance+Comedy films with TMDB rating >= 5
-
-The Academy's "Award Year" convention is retained. For example, the 98th
-ceremony held in March 2026 is the Academy's 2025 award year.
-
-The historical source is downloaded once per Home Assistant process and then
-cached in memory; it is not re-downloaded on each coordinator refresh.
-
-
-### v0.14.1 award-aware profile UI
-
-Discovery profile configuration is now a multi-step flow:
-
-1. Name, media type and discovery source
-2. Award source
-3. Award-specific filters
-4. Ordinary discovery filters
-
-Award sources are filtered by media type before they are shown. Award
-categories are loaded from the selected provider itself, so users cannot
-accidentally choose an Oscar category for a TV-only award or a category that
-does not exist in the backing historical dataset.
-
-The implementation introduces an award-provider registry. Future Guldbaggen,
-BAFTA, Golden Globes and Emmy adapters can provide their own media-type
-capabilities and category lists without changing the discovery-profile UI.
-Only award providers with a working backend adapter are exposed to users.
-
-
-### v0.14.2 award adapter SDK
-
-Only the Oscars adapter is currently implemented.
-
-A formal `AwardAdapter` interface and registry are now included, together with
-`AWARD_ADAPTERS.md`, which documents how to add new award sources. Config flow
-continues to expose only registered, working adapters.
-
-### v0.15.0 award adapters
-
-Implemented and registered award adapters:
-
-- Academy Awards (Oscars) — movies
-- Guldbaggen — movies
-- BAFTA Film Awards — movies
-- BAFTA Television Awards — TV
-- Golden Globes — separate Film and Television adapters
-- Primetime Emmy Awards — TV
-- Festival de Cannes — movies; Official Selection/In Competition is normalized
-  as nomination/selection, festival prizes as wins
-
-All web-backed adapters use the award organizations' official archive pages and
-share an in-process HTTP cache. Award profile results are resolved to TMDB by
-IMDb ID where available, otherwise by candidate title and award-year proximity.
-
-Source web formats differ. The adapters intentionally isolate that parsing from
-the discovery engine so source-specific changes can be fixed without changing
-profile sensors or Lovelace cards.
-
-
-### v0.15.1 Hong Kong Film Awards
-
-Added a film award adapter for the Hong Kong Film Awards using the official
-HKFAA historical archive. It participates in the same dynamic award profile
-UI and can be combined with year ranges, categories, winner/nominee status,
-ratings, genres and provider filters.
-
-
-## Google TV / Android TV development track
-
-A future TV integration is documented in
-[`docs/GOOGLE_TV_INTEGRATION.md`](docs/GOOGLE_TV_INTEGRATION.md).
-
-The proposed architecture keeps Media Watch as the source of recommendation
-logic and watched state, with a thin Android TV bridge capable of targeting
-both legacy TvProvider/Preview Channels and Google Engage. This work is
-deliberately not part of the current runtime integration.
-
-
-### v0.16.0 discovery entities and category taxonomy
-
-Each configured discovery profile is a dedicated Home Assistant sensor.
-
-The sensor:
-
-- has a stable unique ID based on the config entry and profile ID
-- suggests an object ID such as `sensor.media_watch_modern_horror`
-- uses the queue length as its sensor state
-- exposes the card payload in the common `items` attribute
-- exposes profile/media/award metadata as attributes
-
-Example:
-
-```yaml
-type: custom:media-tracker-card
-entity: sensor.media_watch_modern_horror
-title: Modern Horror
-```
-
-Award category configuration now supports two category modes:
-
-1. **Generic category** — choose a stable Media Watch concept such as Best
-   Film, Director, Screenplay, Drama Series or Comedy Series. Media Watch maps
-   that concept to the selected award provider's actual category value(s).
-2. **Award-specific category** — choose directly from the selected adapter's
-   category dropdown.
-
-The award-specific list is always loaded from the selected adapter. The generic
-list is reduced to concepts that can actually map to categories exposed by that
-adapter.
-
-
-### v0.16.1 TMDB genre selectors
-
-Discovery/recommendation profiles no longer require users to type TMDB genre
-names or IDs.
-
-After the profile media type has been selected, Media Watch requests the
-appropriate TMDB genre catalogue and displays localized multi-select dropdowns
-for:
-
-- Include genres
-- Exclude genres
-
-The UI displays names such as `Horror`, `Romance` or their localized
-equivalents while the profile stores stable TMDB genre IDs internally.
-
-Movie and TV genre catalogues are fetched separately. This avoids incorrect
-cross-media assumptions such as movie `Science Fiction` (878) versus TV
-`Sci-Fi & Fantasy` (10765).
-
-Legacy profiles that contain comma-separated genre IDs remain compatible and
-are normalized into the new selector values when edited.
-
-
-### v0.16.2 genre selector fix
-
-Fixed an options-flow crash introduced in v0.16.1. Home Assistant selector
-options are mapping-like values, so genre option IDs must be read using
-`option["value"]` rather than `option.value`.
-
-This affected opening the ordinary discovery-filter step after configuring
-award filters.
-
-
-### v0.16.3 HKFAA configuration fix
-
-Hardened the Hong Kong Film Awards adapter and award profile configuration:
-
-- fixes parsing of bilingual HKFAA category headings by preserving table-cell
-  line boundaries
-- sends normal browser-style request headers to official award sites
-- uses the HKFAA built-in category catalogue if the current archive page is
-  unavailable or cannot be parsed
-- prevents an award provider/category lookup failure from crashing the Home
-  Assistant options flow
-- keeps "All categories" available as a safe fallback
-
-This specifically fixes failures while creating a Hong Kong Film Awards
-discovery profile.
-
-
-### v0.16.4 award resolver call fix
-
-Fixed award-backed discovery queues crashing because a stale `media_type=`
-keyword was still passed to `_award_profile_candidates()`. Media type is now
-derived from the profile inside the resolver.
-
-The profile flow text now explicitly presents the configuration as three
-stages: profile basics, optional award constraints, and final discovery
-filters.
-
-
-### v0.16.5 award resolver and profile UX cleanup
-
-Fixed the award-backed discovery crash by removing the stale `award_source=` keyword from `_award_profile_candidates()`. Media type and award source are both read directly from the profile.
-
-The General options page no longer shows the legacy global discovery filters. Rating, votes, genres, provider scope, pages and queue size are configured per Discovery profile. Existing legacy option values are retained internally for backwards compatibility with the older fixed discovery sensors.
-
-
-### v0.17.0 profile-only discovery
-
-Removed the legacy global discovery model.
-
-Discovery is now exclusively profile-based:
-
-- no global discovery rating/genre/provider/page/limit settings
-- no fixed `Discovery`, `TV discovery`, `Personalized movies`,
-  `Personalized TV`, `Movie discovery` or legacy Oscars discovery sensors
-- no global movie/TV Discover API calls on every coordinator refresh
-- each configured Discovery profile remains its own Home Assistant entity
-- personalized recommendation candidate pools are generated only when one or
-  more personalized profiles actually exist, and their size is derived from
-  those profiles' own limits
-
-Global integration options are now reserved for truly shared settings such as
-TMDB language/region, selected streaming providers and episode-calendar
-behavior.
-
-Existing profile entities and their stable unique IDs are unchanged.
-
-
-### v0.17.1 year-based release filters
-
-Discovery profiles now use release years rather than full dates.
-
-Fields:
-
-- **Release year from** — integer, 1900 through the current year
-- **Release year to** — integer, 1900 through the current year
-- **Maximum age in years (rolling)** — optional dynamic lower bound
-
-Example:
-
-```text
-Maximum age in years: 3
-```
-
-In 2026 this means release year >= 2023. In 2027 the same profile
-automatically means release year >= 2024.
-
-If both an absolute `Release year from` and a rolling maximum age are set, the
-stricter (newer) lower bound wins.
-
-TMDB still receives proper API date bounds internally (`YYYY-01-01` and
-`YYYY-12-31`); the user-facing profile is year-based.
-
-Legacy `YYYY-MM-DD` profile values are read safely by extracting their year
-and are removed when the profile is next edited.
-
-
-### v0.17.2 award TMDB resolution fix
-
-Fixed empty award-backed discovery queues.
-
-The generic award resolver called `_resolve_award_title()` with `source` and
-`media_type` in the wrong order. For an Oscars movie profile this effectively
-became:
-
-```text
-media_type = "oscars"
-award_source = "movie"
-```
-
-so IMDb IDs were resolved against TMDB TV results instead of movie results and
-valid films disappeared from the queue.
-
-The argument order is corrected and the resolver now rejects invalid media
-types explicitly instead of silently producing an empty feed.
-
-
-### v0.17.3 award-provider pipeline hardening
-
-All award providers share the same award-to-TMDB resolver. The argument-order
-bug fixed in v0.17.2 therefore affected every registered award source, not just
-Oscars.
-
-The resolver is now called with explicit keyword arguments:
-
-```python
-_resolve_award_title(
-    item,
-    media_type=media_type,
-    award_source=source,
-)
-```
-
-This prevents future positional swaps between media type and award source.
-
-The registered adapter set is statically checked during development:
-Oscars, Guldbaggen, BAFTA Film, BAFTA Television, Golden Globes Film,
-Golden Globes Television, Primetime Emmy, Cannes and Hong Kong Film Awards.
-
-Discovery profile sensors also expose award category/status/year diagnostics as
-top-level attributes, making empty award queues easier to debug.
-
-
-### v0.17.4 optional year selector fix
-
-Fixed Home Assistant options-flow validation errors such as:
-
-```text
-expected float
-```
-
-The optional release-year and rolling-age NumberSelector fields no longer
-receive `None` as a default value. When unset, the schema now omits the default
-entirely, so Home Assistant treats the fields as genuinely optional.
-
-This affects:
-
-- Release year from
-- Release year to
-- Maximum age in years (rolling)
-
-
-### v0.17.5 release-year helper regression fix
-
-Fixed:
-
-```text
-'MediaWatchCoordinator' object has no attribute
-'_profile_release_date_gte'
-```
-
-The release-year-to-TMDB conversion helpers are now explicitly present on the
-coordinator and validated during packaging:
-
-- `_profile_release_year_from`
-- `_profile_release_date_gte`
-- `_profile_release_date_lte`
-- `_parse_optional_year`
-- `_parse_optional_int`
-
-
-### v0.17.6 coordinator consistency audit
-
-Fixed the missing `_year_from_date()` helper introduced during the release-year
-refactor.
-
-A static consistency audit is now performed during development against
-`MediaWatchCoordinator`:
-
-- every local `self._...()` call must resolve to a method on the coordinator
-- calls to local methods are checked for unsupported keyword arguments
-- legacy date fields are not written by the current options flow
-- Python and JSON files are compiled/parsed before packaging
-
-This audit also re-checks the recent award resolver and release-year helper
-changes so missing-method regressions are caught before packaging.
-
-
-### v0.17.8 actual coordinator hotfix
-
-This release is built using the exact `coordinator.py` supplied from the
-installed v0.17.6 instance.
-
-That file called `_year_from_date()` from `_profile_post_filter()` but did not
-define `_year_from_date()` on `MediaWatchCoordinator`.
-
-The helper is now added directly to the class. The final packaged coordinator
-is AST-checked so that:
-
-- every `self._...()` call resolves to a class method or known inherited method
-- internal keyword arguments match the target method signatures
-- all release-year helper methods are direct members of `MediaWatchCoordinator`
-
-
-### v0.17.9 watched-profile toggle and movie credits
-
-- Discovery profiles have an **Exclude watched titles** switch. It remains
-  enabled by default; disabling it lets watched titles remain in the profile
-  sensor with `watched: true` so compatible cards can unmark them.
-- Movie profile items expose the release date, director names and the first
-  three credited cast members. Credits are appended to the existing TMDB movie
-  details request, so this does not add another request per title.
-- The same existing movie-details response also supplies `runtime`, localized
-  `tagline`, `original_language`, `production_countries`, writers and
-  collection/franchise metadata to movie profile and watchlist feeds. The
-  selected-language title is exposed as `title`; a different title from the
-  configured fallback language is exposed separately as `fallback_title`.
-- Award-backed profile items expose a compact `award_summary` containing total
-  nominations and wins, winner state, organizations, years, categories and
-  winning categories. It is derived from the existing `award`/`awards` data
-  and performs no additional award or TMDB requests.
-- HKFAA person and crew categories expose the official English-transliterated
-  names in `award.recipients`. Director-only profiles also use those names in
-  `directors`, while screenplay-only profiles expose them in `writers`; the
-  Chinese recipient name is never used as the TMDB movie search title.
-- Movie watchlist items are matched against a cached historical Oscar Best
-  Picture index by IMDb ID and expose `award`, `awards` and `award_summary` for
-  matching nominees and winners. TMDB `external_ids` is appended to the
-  existing movie-details response, so this adds no per-film API request.
-- Oscar metadata preserves the dataset's named recipients. Film results also
-  carry `award.person_wins` for acting and directing winners from the same
-  configured award-year range, even when the profile itself selects a title
-  category such as Best Picture.
+The test suite also performs static AST checks for unresolved private
+coordinator calls, unsupported keyword arguments, config-flow/profile field
+drift and award-adapter interface mismatches. A real Home Assistant test
+instance is still appropriate for end-to-end config-flow, entity-registry and
+dashboard-card validation.

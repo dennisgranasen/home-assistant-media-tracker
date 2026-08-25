@@ -18,7 +18,11 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .award_taxonomy import resolve_source_categories
-from .award_registry import create_adapter, providers_for_media_type
+from .award_registry import (
+    create_adapter,
+    label_for_source,
+    providers_for_media_type,
+)
 from .api import TMDBApi, TMDBError
 from .const import (
     CONF_ACCOUNT_ID,
@@ -1376,7 +1380,10 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         organizations = sorted(
             {
-                str(award.get("organization") or award.get("source"))
+                str(
+                    award.get("organization")
+                    or label_for_source(str(award.get("source") or ""))
+                )
                 for award in awards
                 if award.get("organization") or award.get("source")
             }
@@ -1699,8 +1706,12 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if str(chinese).strip() and str(english).strip()
             }
             await self._translate_hong_kong_credits(item, aliases)
+        organization = (
+            award_item.get("organization")
+            or label_for_source(award_source)
+        )
         item["award"] = {
-            "organization": award_item.get("organization") or award_source,
+            "organization": organization,
             "source": award_source,
             "award_years": award_item.get("award_years", []),
             "nominations": award_item.get("nominations", 0),
@@ -1709,6 +1720,14 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "winning_categories": award_item.get("winning_categories", []),
             "recipients": recipients,
             "person_wins": list(award_item.get("person_wins", [])),
+            "badge": {
+                "source": award_source,
+                "label": organization,
+                "icon": AWARD_BADGE_ICONS.get(
+                    award_source,
+                    "mdi:medal-outline",
+                ),
+            },
         }
         if len(award_categories) == 1 and recipients:
             category = str(award_categories[0]).casefold()

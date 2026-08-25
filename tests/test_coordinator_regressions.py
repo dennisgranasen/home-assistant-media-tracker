@@ -340,6 +340,40 @@ def test_award_recipient_overrides_localized_director_name() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("source", "label"),
+    [
+        ("golden_globes_film", "Golden Globes – Film"),
+        ("hong_kong_film_awards", "Hong Kong Film Awards"),
+    ],
+)
+def test_award_source_uses_registered_display_label(
+    source: str,
+    label: str,
+) -> None:
+    coordinator = _coordinator()
+
+    async def enrich(self, candidate):
+        return {"id": candidate["id"]}
+
+    coordinator._enrich_movie = MethodType(enrich, coordinator)
+
+    result = asyncio.run(
+        coordinator._resolve_award_title(
+            {
+                "tmdb_id": 7,
+                "categories": ["Best Film"],
+                "nominations": 1,
+            },
+            media_type="movie",
+            award_source=source,
+        )
+    )
+
+    assert result["award"]["organization"] == label
+    assert result["award"]["badge"]["label"] == label
+
+
 def test_hong_kong_aliases_override_tmdb_credits_for_any_category() -> None:
     coordinator = _coordinator()
 
