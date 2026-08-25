@@ -830,6 +830,18 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return year
         return cls._parse_optional_int(value)
 
+    @staticmethod
+    def _year_from_date(value: Any) -> int | None:
+        """Extract a four-digit year from a TMDB date value."""
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        if len(text) >= 4 and text[:4].isdigit():
+            year = int(text[:4])
+            if 1800 <= year <= 2200:
+                return year
+        return None
+
     @property
     def discovery_profiles(self) -> list[dict[str, Any]]:
         """Return configured dynamic discovery profiles."""

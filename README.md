@@ -776,3 +776,20 @@ coordinator and validated during packaging:
 - `_profile_release_date_lte`
 - `_parse_optional_year`
 - `_parse_optional_int`
+
+
+### v0.17.6 coordinator consistency audit
+
+Fixed the missing `_year_from_date()` helper introduced during the release-year
+refactor.
+
+A static consistency audit is now performed during development against
+`MediaWatchCoordinator`:
+
+- every local `self._...()` call must resolve to a method on the coordinator
+- calls to local methods are checked for unsupported keyword arguments
+- legacy date fields are not written by the current options flow
+- Python and JSON files are compiled/parsed before packaging
+
+This audit also re-checks the recent award resolver and release-year helper
+changes so missing-method regressions are caught before packaging.
