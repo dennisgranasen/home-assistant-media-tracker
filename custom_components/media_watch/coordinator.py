@@ -808,6 +808,28 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return result
 
 
+    @staticmethod
+    def _parse_optional_int(value: Any) -> int | None:
+        """Parse an optional integer safely."""
+        if value in (None, ""):
+            return None
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _parse_optional_year(cls, value: Any) -> int | None:
+        """Parse a year, including legacy YYYY-MM-DD values."""
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        if len(text) >= 4 and text[:4].isdigit():
+            year = int(text[:4])
+            if 1800 <= year <= 2200:
+                return year
+        return cls._parse_optional_int(value)
+
     @property
     def discovery_profiles(self) -> list[dict[str, Any]]:
         """Return configured dynamic discovery profiles."""
@@ -1156,6 +1178,42 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         )
         return [item for item in resolved if item is not None]
+
+    def _profile_release_year_from(
+        self,
+        profile: dict[str, Any],
+    ) -> int | None:
+        """Resolve absolute and rolling release-year constraints."""
+        year_from = self._parse_optional_year(
+            profile.get("release_year_from")
+            or profile.get("release_date_gte")
+        )
+        max_age = self._parse_optional_int(
+            profile.get("release_max_age_years")
+        )
+        if max_age is not None and max_age >= 0:
+            rolling_from = dt_util.now().year - max_age
+            year_from = max(year_from or rolling_from, rolling_from)
+        return year_from
+
+    def _profile_release_date_gte(
+        self,
+        profile: dict[str, Any],
+    ) -> str | None:
+        """Translate a profile lower year bound to TMDB date format."""
+        year = self._profile_release_year_from(profile)
+        return f"{year:04d}-01-01" if year is not None else None
+
+    def _profile_release_date_lte(
+        self,
+        profile: dict[str, Any],
+    ) -> str | None:
+        """Translate a profile upper year bound to TMDB date format."""
+        year = self._parse_optional_year(
+            profile.get("release_year_to")
+            or profile.get("release_date_lte")
+        )
+        return f"{year:04d}-12-31" if year is not None else None
 
     async def _build_discovery_profiles(
         self,

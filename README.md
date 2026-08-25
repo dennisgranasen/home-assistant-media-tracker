@@ -757,3 +757,22 @@ This affects:
 - Release year from
 - Release year to
 - Maximum age in years (rolling)
+
+
+### v0.17.5 release-year helper regression fix
+
+Fixed:
+
+```text
+'MediaWatchCoordinator' object has no attribute
+'_profile_release_date_gte'
+```
+
+The release-year-to-TMDB conversion helpers are now explicitly present on the
+coordinator and validated during packaging:
+
+- `_profile_release_year_from`
+- `_profile_release_date_gte`
+- `_profile_release_date_lte`
+- `_parse_optional_year`
+- `_parse_optional_int`
