@@ -62,6 +62,24 @@ async def fetch_lines(hass, url: str) -> list[str]:
     return lines
 
 
+async def fetch_text(hass, url: str) -> str:
+    """Fetch and cache an award source as raw HTML text."""
+    key = f"text:{url}"
+    cache = hass.data.setdefault("media_watch_award_http_cache", {})
+    if key in cache:
+        return str(cache[key])
+    session = async_get_clientsession(hass)
+    async with session.get(
+        url,
+        timeout=45,
+        headers=AWARD_HTTP_HEADERS,
+    ) as response:
+        response.raise_for_status()
+        text = await response.text()
+    cache[key] = text
+    return text
+
+
 def aggregate_records(records: list[dict[str, Any]], status: str) -> list[dict[str, Any]]:
     """Collapse raw nomination/winner records to one row per title-ish key."""
     grouped: dict[str, dict[str, Any]] = {}

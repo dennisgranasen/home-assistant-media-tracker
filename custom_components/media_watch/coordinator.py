@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import unicodedata
 from datetime import date, timedelta
 from typing import Any
 
@@ -15,7 +16,6 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .awards import OscarsRepository
 from .award_taxonomy import resolve_source_categories
 from .award_registry import create_adapter, providers_for_media_type
 from .api import TMDBApi, TMDBError
@@ -42,7 +42,6 @@ from .const import (
     PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
     AWARD_SOURCE_NONE,
     AWARD_SOURCE_ANY,
-    AWARD_SOURCE_OSCARS,
     AWARD_STATUS_ANY,
     AWARD_STATUS_WINNER,
     AWARD_STATUS_NOMINATED_NO_WIN,
@@ -59,6 +58,15 @@ _LOGGER = logging.getLogger(__name__)
 
 STREAMING_TYPES = ("flatrate", "free", "ads")
 ALL_AVAILABILITY_TYPES = ("flatrate", "free", "ads", "rent", "buy")
+
+AWARD_BADGE_ICONS = {
+    "oscars": "mdi:trophy-award",
+    "guldbaggen": "mdi:bug-outline",
+    "bafta_film": "mdi:drama-masks",
+    "golden_globes_film": "mdi:earth",
+    "cannes": "mdi:palm-tree",
+    "hong_kong_film_awards": "mdi:filmstrip",
+}
 
 
 def _merge_person_wins(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -99,11 +107,14 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.store = store
         self._profile_language: str | None = None
         self._profile_region: str | None = None
-        self._oscars = OscarsRepository(hass)
         self._award_tmdb_cache: dict[str, dict[str, Any] | None] = {}
-        self._watchlist_best_picture_index: (
-            dict[str, dict[str, Any]] | None
-        ) = None
+        self._watchlist_top_film_index_key: tuple[int, ...] | None = None
+        self._watchlist_top_film_by_imdb: dict[
+            str, list[dict[str, Any]]
+        ] = {}
+        self._watchlist_top_film_by_title: dict[
+            str, list[dict[str, Any]]
+        ] = {}
 
     def _option(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
@@ -429,51 +440,261 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self,
         movies: list[dict[str, Any]],
     ) -> None:
-        """Attach cached Oscar Best Picture facts to watchlist movies."""
+        """Attach top-film award facts from every compatible adapter."""
         if not movies:
             return
 
-        if self._watchlist_best_picture_index is None:
-            try:
-                records = await self._oscars.async_filter_films(
-                    year_from=None,
-                    year_to=None,
-                    category="BEST PICTURE",
-                    status=AWARD_STATUS_ANY,
-                )
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "Could not build watchlist Oscar index: %s",
-                    err,
-                )
-                return
-            self._watchlist_best_picture_index = {
-                str(record["imdb_id"]): record
-                for record in records
-                if str(record.get("imdb_id") or "").startswith("tt")
-            }
+        release_years = {
+            int(str(movie.get("release_date") or "")[:4])
+            for movie in movies
+            if str(movie.get("release_date") or "")[:4].isdigit()
+        }
+        # Ceremonies can precede general release or occur in either of the
+        # following two years. Limit web adapters to relevant years rather
+        # than crawling their full history whenever Home Assistant starts.
+        award_years = tuple(
+            sorted(
+                {
+                    year + offset
+                    for year in release_years
+                    for offset in (-1, 0, 1, 2)
+                }
+            )
+        )
+        if not award_years:
+            award_years = (dt_util.now().year,)
+
+        if self._watchlist_top_film_index_key != award_years:
+            await self._async_build_watchlist_top_film_index(award_years)
 
         for movie in movies:
             imdb_id = str(movie.get("imdb_id") or "")
-            facts = self._watchlist_best_picture_index.get(imdb_id)
-            if facts is None:
+            awards = list(
+                self._watchlist_top_film_by_imdb.get(imdb_id, [])
+            )
+            release_text = str(movie.get("release_date") or "")[:4]
+            release_year = (
+                int(release_text) if release_text.isdigit() else None
+            )
+            for title in (movie.get("title"), movie.get("original_title")):
+                key = self._award_title_key(title)
+                if key:
+                    awards.extend(
+                        award
+                        for award in self._watchlist_top_film_by_title.get(
+                            key, []
+                        )
+                        if release_year is None
+                        or any(
+                            release_year - 1
+                            <= int(award_year)
+                            <= release_year + 2
+                            for award_year in award.get(
+                                "award_years", []
+                            )
+                        )
+                    )
+            awards = self._merge_awards_by_source(awards)
+            if not awards:
                 continue
 
-            award = {
-                "organization": "Academy Awards",
-                "source": AWARD_SOURCE_OSCARS,
-                "award_years": list(facts.get("award_years", [])),
-                "nominations": int(facts.get("nominations", 0)),
-                "wins": int(facts.get("wins", 0)),
-                "categories": list(facts.get("categories", [])),
-                "winning_categories": list(
-                    facts.get("winning_categories", [])
-                ),
-                "person_wins": list(facts.get("person_wins", [])),
-            }
-            movie["award"] = award
-            movie["awards"] = [award]
+            movie["awards"] = awards
+            movie["award"] = (
+                awards[0]
+                if len(awards) == 1
+                else self._aggregate_awards(awards)
+            )
             movie["award_summary"] = self._award_summary(movie)
+
+    @staticmethod
+    def _award_title_key(value: Any) -> str:
+        """Normalize a title for local cross-source matching."""
+        normalized = unicodedata.normalize("NFKD", str(value or ""))
+        return "".join(
+            char
+            for char in normalized.casefold()
+            if char.isalnum() and not unicodedata.combining(char)
+        )
+
+    @staticmethod
+    def _award_year_ranges(
+        years: tuple[int, ...],
+    ) -> list[tuple[int, int]]:
+        """Collapse relevant award years into contiguous query ranges."""
+        ranges: list[tuple[int, int]] = []
+        for year in years:
+            if not ranges or year > ranges[-1][1] + 1:
+                ranges.append((year, year))
+            else:
+                ranges[-1] = (ranges[-1][0], year)
+        return ranges
+
+    async def _async_build_watchlist_top_film_index(
+        self,
+        award_years: tuple[int, ...],
+    ) -> None:
+        by_imdb: dict[str, list[dict[str, Any]]] = {}
+        by_title: dict[str, list[dict[str, Any]]] = {}
+        ranges = self._award_year_ranges(award_years)
+        complete = True
+
+        for info in providers_for_media_type("movie"):
+            adapter = create_adapter(self.hass, info.source)
+            if adapter is None:
+                continue
+            try:
+                options = await adapter.async_categories("movie")
+                categories = resolve_source_categories(
+                    info.source,
+                    "best_film",
+                    options,
+                )
+                records: list[dict[str, Any]] = []
+                for year_from, year_to in ranges:
+                    for category in categories:
+                        records.extend(
+                            await adapter.async_filter_titles(
+                                media_type="movie",
+                                year_from=year_from,
+                                year_to=year_to,
+                                category=category,
+                                status=AWARD_STATUS_ANY,
+                            )
+                        )
+            except Exception as err:  # noqa: BLE001
+                complete = False
+                _LOGGER.warning(
+                    "Could not load watchlist awards from %s: %s",
+                    info.source,
+                    err,
+                )
+                continue
+
+            for record in records:
+                award = {
+                    "organization": info.label,
+                    "source": info.source,
+                    "award_years": list(record.get("award_years", [])),
+                    "nominations": int(record.get("nominations", 0)),
+                    "wins": int(record.get("wins", 0)),
+                    "categories": list(record.get("categories", [])),
+                    "winning_categories": list(
+                        record.get("winning_categories", [])
+                    ),
+                    "recipients": list(record.get("recipients", [])),
+                    "person_wins": list(record.get("person_wins", [])),
+                    "badge": {
+                        "source": info.source,
+                        "label": info.label,
+                        "icon": AWARD_BADGE_ICONS.get(
+                            info.source,
+                            "mdi:medal-outline",
+                        ),
+                    },
+                }
+                imdb_id = str(record.get("imdb_id") or "")
+                if imdb_id.startswith("tt"):
+                    by_imdb.setdefault(imdb_id, []).append(award)
+                candidates = [
+                    record.get("title"),
+                    *record.get("title_candidates", []),
+                ]
+                for candidate in candidates:
+                    key = self._award_title_key(candidate)
+                    if key:
+                        by_title.setdefault(key, []).append(award)
+
+        self._watchlist_top_film_by_imdb = by_imdb
+        self._watchlist_top_film_by_title = by_title
+        # Retry a provider-level transient failure next update. Successful
+        # HTTP and adapter results remain cached, so this is inexpensive.
+        self._watchlist_top_film_index_key = (
+            award_years if complete else None
+        )
+
+    @staticmethod
+    def _merge_awards_by_source(
+        awards: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Deduplicate title/IMDb matches and merge facts per source."""
+        merged: dict[str, dict[str, Any]] = {}
+        for award in awards:
+            source = str(award.get("source") or "unknown")
+            if source not in merged:
+                merged[source] = dict(award)
+                continue
+            target = merged[source]
+            for field in (
+                "award_years",
+                "categories",
+                "winning_categories",
+                "recipients",
+            ):
+                target[field] = sorted(
+                    set(target.get(field, []))
+                    | set(award.get(field, []))
+                )
+            target["person_wins"] = _merge_person_wins(
+                target.get("person_wins", []),
+                award.get("person_wins", []),
+            )
+            # A title can be reached through IMDb, title aliases and repeated
+            # category queries; these are the same facts, not extra awards.
+            target["nominations"] = max(
+                int(target.get("nominations", 0)),
+                int(award.get("nominations", 0)),
+            )
+            target["wins"] = max(
+                int(target.get("wins", 0)),
+                int(award.get("wins", 0)),
+            )
+        return [merged[source] for source in sorted(merged)]
+
+    @staticmethod
+    def _aggregate_awards(
+        awards: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build the legacy aggregate award field for multiple sources."""
+        return {
+            "organization": "Multiple award organizations",
+            "source": AWARD_SOURCE_ANY,
+            "sources": [award["source"] for award in awards],
+            "award_years": sorted(
+                {
+                    year
+                    for award in awards
+                    for year in award.get("award_years", [])
+                }
+            ),
+            "nominations": sum(
+                int(award.get("nominations", 0)) for award in awards
+            ),
+            "wins": sum(int(award.get("wins", 0)) for award in awards),
+            "categories": sorted(
+                {
+                    category
+                    for award in awards
+                    for category in award.get("categories", [])
+                }
+            ),
+            "winning_categories": sorted(
+                {
+                    category
+                    for award in awards
+                    for category in award.get("winning_categories", [])
+                }
+            ),
+            "recipients": sorted(
+                {
+                    recipient
+                    for award in awards
+                    for recipient in award.get("recipients", [])
+                }
+            ),
+            "person_wins": _merge_person_wins(
+                *[list(award.get("person_wins", [])) for award in awards]
+            ),
+        }
 
 
     async def _enrich_tv_discovery(
@@ -1028,6 +1249,11 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             int(award.get("nominations", 0)) for award in awards
         )
         wins = sum(int(award.get("wins", 0)) for award in awards)
+        badges = [
+            dict(award["badge"])
+            for award in awards
+            if isinstance(award.get("badge"), dict)
+        ]
 
         return {
             "nominations": nominations,
@@ -1035,6 +1261,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "winner": wins > 0,
             "sources": sources,
             "organizations": organizations,
+            **({"badges": badges} if badges else {}),
             "award_years": sorted(
                 {
                     int(year)

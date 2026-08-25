@@ -239,48 +239,130 @@ def test_award_recipient_overrides_localized_director_name() -> None:
     ]
 
 
-def test_watchlist_movies_receive_cached_best_picture_awards() -> None:
-    class Oscars:
-        calls = 0
+def test_watchlist_movies_receive_cached_top_film_awards(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, int, int, str]] = []
 
-        async def async_filter_films(self, **kwargs):
-            self.calls += 1
-            assert kwargs == {
-                "year_from": None,
-                "year_to": None,
-                "category": "BEST PICTURE",
-                "status": "any",
-            }
+    class Adapter:
+        def __init__(self, source, label, category, records):
+            self.info = SimpleNamespace(source=source, label=label)
+            self.category = category
+            self.records = records
+
+        async def async_categories(self, media_type):
+            assert media_type == "movie"
             return [
+                {"value": "all", "label": "All"},
+                {"value": self.category, "label": self.category},
+            ]
+
+        async def async_filter_titles(
+            self, *, media_type, year_from, year_to, category, status
+        ):
+            assert media_type == "movie"
+            assert status == "any"
+            calls.append((self.info.source, year_from, year_to, category))
+            return list(self.records)
+
+    adapters = {
+        "oscars": Adapter(
+            "oscars",
+            "Academy Awards (Oscars)",
+            "BEST PICTURE",
+            [
                 {
+                    "title": "Localized title does not matter",
                     "imdb_id": "tt1234567",
                     "award_years": [2024],
                     "categories": ["BEST PICTURE"],
                     "nominations": 1,
                     "wins": 1,
                     "winning_categories": ["BEST PICTURE"],
-                    "person_wins": [],
                 }
-            ]
-
+            ],
+        ),
+        "guldbaggen": Adapter(
+            "guldbaggen",
+            "Guldbaggen",
+            "Bästa film",
+            [
+                {
+                    "title": "En annan titel",
+                    "award_years": [2024],
+                    "categories": ["Bästa film"],
+                    "nominations": 1,
+                    "wins": 0,
+                    "winning_categories": [],
+                },
+                {
+                    "title": "Återträffen",
+                    "title_candidates": ["Återträffen"],
+                    "award_years": [2024],
+                    "categories": ["Bästa film"],
+                    "nominations": 1,
+                    "wins": 1,
+                    "winning_categories": ["Bästa film"],
+                }
+            ],
+        ),
+    }
+    monkeypatch.setattr(
+        coordinator_module,
+        "providers_for_media_type",
+        lambda media_type: [adapter.info for adapter in adapters.values()],
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "create_adapter",
+        lambda hass, source: adapters[source],
+    )
     coordinator = _coordinator()
-    coordinator._oscars = Oscars()
-    coordinator._watchlist_best_picture_index = None
+    coordinator._watchlist_top_film_index_key = None
+    coordinator._watchlist_top_film_by_imdb = {}
+    coordinator._watchlist_top_film_by_title = {}
     movies = [
-        {"id": 1, "imdb_id": "tt1234567"},
-        {"id": 2, "imdb_id": "tt7654321"},
+        {
+            "id": 1,
+            "imdb_id": "tt1234567",
+            "title": "En annan titel",
+            "release_date": "2023-05-01",
+        },
+        {
+            "id": 2,
+            "imdb_id": "tt7654321",
+            "title": "The Reunion",
+            "original_title": "Atertraffen",
+            "release_date": "2023-09-01",
+        },
     ]
 
     asyncio.run(coordinator._async_enrich_watchlist_awards(movies))
     asyncio.run(coordinator._async_enrich_watchlist_awards(movies))
 
-    assert coordinator._oscars.calls == 1
-    assert movies[0]["award"]["source"] == "oscars"
+    assert len(calls) == 2
+    assert movies[0]["award"]["source"] == "any"
+    assert [award["source"] for award in movies[0]["awards"]] == [
+        "guldbaggen",
+        "oscars",
+    ]
+    assert [
+        badge["icon"]
+        for badge in movies[0]["award_summary"]["badges"]
+    ] == ["mdi:bug-outline", "mdi:trophy-award"]
     assert movies[0]["award_summary"]["winner"] is True
     assert movies[0]["award_summary"]["winning_categories"] == [
         "BEST PICTURE"
     ]
-    assert "award" not in movies[1]
+    assert movies[1]["award"]["source"] == "guldbaggen"
+    assert movies[1]["award"]["badge"]["icon"] == "mdi:bug-outline"
+    assert movies[1]["award_summary"]["badges"] == [
+        {
+            "source": "guldbaggen",
+            "label": "Guldbaggen",
+            "icon": "mdi:bug-outline",
+        }
+    ]
 
 
 def test_movie_details_append_credits_and_external_ids() -> None:

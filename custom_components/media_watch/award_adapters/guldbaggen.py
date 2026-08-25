@@ -3,10 +3,125 @@
 from __future__ import annotations
 
 import re
+from html.parser import HTMLParser
 from typing import Any
 
 from ..award_adapter import AwardAdapter, AwardAdapterInfo
-from .web_common import aggregate_records, fetch_lines, in_year_range
+from .web_common import (
+    aggregate_records,
+    fetch_text,
+    in_year_range,
+)
+
+
+class _CurrentNomineeParser(HTMLParser):
+    """Parse the official current nominee cards and their winner class."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.records: list[dict[str, Any]] = []
+        self._award_depth = 0
+        self._text_depth = 0
+        self._category: str | None = None
+        self._year: int | None = None
+        self._winner = False
+        self._title = ""
+        self._credit = ""
+        self._capture: str | None = None
+        self._parts: list[str] = []
+
+    @staticmethod
+    def _classes(attrs) -> set[str]:
+        return {
+            value
+            for key, raw in attrs
+            if key == "class"
+            for value in str(raw).split()
+        }
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        tag = tag.lower()
+        classes = self._classes(attrs)
+        if tag == "div":
+            if self._award_depth:
+                self._award_depth += 1
+            elif "awardRow" in classes:
+                self._award_depth = 1
+                self._category = None
+                self._year = None
+
+            if self._text_depth:
+                self._text_depth += 1
+            elif self._award_depth and "text" in classes:
+                self._text_depth = 1
+                self._winner = "isWinner" in classes
+                self._title = ""
+                self._credit = ""
+
+        if self._award_depth and tag in {"h2", "h3", "h4"}:
+            self._capture = tag
+            self._parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._capture:
+            self._parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag == self._capture:
+            value = re.sub(r"\s+", " ", "".join(self._parts)).strip()
+            if tag == "h2":
+                self._category = value
+            elif tag == "h3" and self._text_depth:
+                self._title = value
+            elif tag == "h3" and re.fullmatch(r"(?:19|20)\d{2}", value):
+                self._year = int(value)
+            elif tag == "h4":
+                self._credit = value
+            self._capture = None
+            self._parts = []
+
+        if tag != "div":
+            return
+        if self._text_depth:
+            self._text_depth -= 1
+            if self._text_depth == 0:
+                self._emit()
+        if self._award_depth:
+            self._award_depth -= 1
+
+    @staticmethod
+    def _film_title(category: str, title: str, credit: str) -> str:
+        if category in {
+            "Bästa film",
+            "Bästa dokumentärfilm",
+            "Bästa kortfilm",
+            "Guldbaggens publikpris",
+        }:
+            return title
+        role_match = re.search(r"\bi\s+(.+)$", credit, re.I)
+        if role_match:
+            return role_match.group(1).strip()
+        for_match = re.match(r"för\s+(.+)$", credit, re.I)
+        return for_match.group(1).strip() if for_match else ""
+
+    def _emit(self) -> None:
+        category = self._category or ""
+        film = self._film_title(category, self._title, self._credit)
+        if not category or not film:
+            return
+        recipients = [] if film == self._title else [self._title]
+        record = {
+            "media_type": "movie",
+            "category": category,
+            "title": film,
+            "title_candidates": [film],
+            "recipients": recipients,
+            "winner": self._winner,
+        }
+        if self._year is not None:
+            record["award_year"] = self._year
+        self.records.append(record)
 
 
 class GuldbaggenAwardAdapter(AwardAdapter):
@@ -27,46 +142,48 @@ class GuldbaggenAwardAdapter(AwardAdapter):
     async def _load(self) -> list[dict[str, Any]]:
         if self._records is not None:
             return self._records
-        lines = await fetch_lines(self.hass, self.ARCHIVE_URL)
-        records: list[dict[str, Any]] = []
-        category: str | None = None
-        year: int | None = None
-        skip_prefixes = ("Producent", "Regi:", "Manus:", "Foto:", "Skådespelare:")
-        for line in lines:
-            if re.fullmatch(r"(?:19|20)\d{2}", line):
-                year = int(line)
-                continue
-            if line.startswith("Bästa ") or line in {"Gullspira", "Hedersguldbagge", "Guldbaggens publikpris", "Guldpiga"}:
-                category = line
-                continue
-            if not category or year is None or line.startswith(skip_prefixes):
-                continue
-            if line in {"Tidigare år", "Filtrera på:", "Arkiv"}:
-                continue
-            # The official archive exposes the nominated work/person followed by
-            # credit text. For person categories, the following credit often contains
-            # "för <film>"; both strings are kept as title candidates so TMDB resolution
-            # can select the media title rather than the person name.
-            if len(line) > 1 and not line.endswith(":"):
-                records.append({"media_type": "movie", "award_year": year, "category": category, "title": line, "title_candidates": [line], "winner": False})
+        archive_html = await fetch_text(self.hass, self.ARCHIVE_URL)
+        archive_parser = _CurrentNomineeParser()
+        archive_parser.feed(archive_html)
+        records = [
+            record
+            for record in archive_parser.records
+            if record.get("award_year") is not None
+        ]
 
-        # Current official nominee page explicitly marks winners. Overlay winner facts
-        # for the latest completed film year where the site provides VINNARE labels.
+        # Current nominee cards mark the winner structurally with
+        # div.text.isWinner. Parse that class together with its h3/h4 content;
+        # the visible VINNARE label follows the title and cannot be interpreted
+        # correctly as a flat sequence of text lines.
         try:
-            current = await fetch_lines(self.hass, self.CURRENT_URL)
-            cur_category = None
-            latest_year = max((r["award_year"] for r in records), default=0) + 1
-            winner_pending = False
-            for line in current:
-                if line.upper() == "VINNARE":
-                    winner_pending = True
-                    continue
-                if line.startswith("Bästa "):
-                    cur_category = line
-                    continue
-                if winner_pending and cur_category and line and not line.startswith(("Producent", "Regi", "för rollen", "för ")):
-                    records.append({"media_type": "movie", "award_year": latest_year, "category": cur_category, "title": line, "title_candidates": [line], "winner": True})
-                    winner_pending = False
+            current_html = await fetch_text(self.hass, self.CURRENT_URL)
+            parser = _CurrentNomineeParser()
+            parser.feed(current_html)
+            year_match = re.search(
+                r"(?:nominerade|vinnare)[^<]{0,40}((?:19|20)\d{2})",
+                current_html,
+                re.I,
+            )
+            latest_year = (
+                int(year_match.group(1))
+                if year_match
+                else max(
+                    (r["award_year"] for r in records),
+                    default=0,
+                )
+                + 1
+            )
+            current_records = [
+                {**record, "award_year": latest_year}
+                for record in parser.records
+            ]
+            if current_records:
+                records = [
+                    record
+                    for record in records
+                    if record["award_year"] != latest_year
+                ]
+                records.extend(current_records)
         except Exception:
             pass
         self._records = records

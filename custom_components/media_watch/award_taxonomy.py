@@ -111,7 +111,10 @@ SOURCE_CATEGORY_ALIASES: dict[str, dict[str, list[str]]] = {
         "visual_effects": ["Special Visual Effects"],
     },
     "golden_globes_film": {
-        "best_film": ["Best Motion Picture"],
+        "best_film": [
+            "Best Motion Picture - Drama",
+            "Best Motion Picture - Musical or Comedy",
+        ],
         "director": ["Best Director"],
         "actor_lead": ["Best Performance by a Male Actor in a Motion Picture", "Best Actor"],
         "actress_lead": ["Best Performance by a Female Actor in a Motion Picture", "Best Actress"],
@@ -139,6 +142,13 @@ SOURCE_CATEGORY_ALIASES: dict[str, dict[str, list[str]]] = {
         "song": ["Best Original Film Song"],
         "sound": ["Best Sound"],
         "visual_effects": ["Best Visual Effects"],
+    },
+    "cannes": {
+        "best_film": ["Palme d'or"],
+        "director": ["Award for Best Director"],
+        "actor_lead": ["Award for Best Actor"],
+        "actress_lead": ["Award for Best Actress"],
+        "screenplay": ["Award for Best Screenplay"],
     },
     "emmys": {
         "drama_series": ["Outstanding Drama Series"],
