@@ -189,11 +189,11 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         return result
 
     @classmethod
-    def _title_candidates(
+    def _entry_lines(
         cls,
         nominee_text: str,
-        category: str,
     ) -> list[str]:
+        """Return nominee text before production-company credit lines."""
         lines = [
             re.sub(r"\s+", " ", line).strip()
             for line in re.split(r"[\n\r]+", nominee_text)
@@ -215,6 +215,15 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
             ):
                 break
             entry_lines.append(line)
+        return entry_lines
+
+    @classmethod
+    def _title_candidates(
+        cls,
+        nominee_text: str,
+        category: str,
+    ) -> list[str]:
+        entry_lines = cls._entry_lines(nominee_text)
         entry_text = "\n".join(entry_lines)
 
         top_film_categories = {
@@ -241,7 +250,18 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                     ):
                         candidates.append(" ".join(words[1:]))
         else:
-            candidates = cls._english_chunks(entry_text)
+            # Person/crew categories put the English film title in
+            # parentheses after the English recipient name. Never send the
+            # recipient's name to TMDB as though it were a movie title.
+            candidates = []
+            for line in entry_lines:
+                for value in re.findall(r"\(([^()]{1,120})\)", line):
+                    value = value.strip()
+                    if re.search(r"[A-Za-z]", value):
+                        candidates.append(value)
+            candidates = list(dict.fromkeys(candidates))
+            if not candidates:
+                candidates = cls._english_chunks(entry_text)
 
         # The earliest winner-only pages contain Chinese text only. Crew and
         # acting winners include the film title in parentheses; Best Film is
@@ -272,6 +292,34 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         # For person/crew categories, parenthesized film titles are generally
         # the best TMDB resolution candidate, so preserve those first.
         return candidates
+
+    @classmethod
+    def _recipients(
+        cls,
+        nominee_text: str,
+        category: str,
+    ) -> list[str]:
+        """Extract English recipient names from bilingual nominee text."""
+        if category in {
+            "Best Film",
+            "Best Asian Chinese Language Film",
+            "Best Asian Film",
+        }:
+            return []
+
+        recipients: list[str] = []
+        for line in cls._entry_lines(nominee_text):
+            match = re.search(
+                r"([A-Za-z][A-Za-z .,'’/-]+?)\s*\([^()]+\)\s*$",
+                line,
+            )
+            if not match:
+                continue
+            for name in match.group(1).split(","):
+                name = name.strip()
+                if name and name not in recipients:
+                    recipients.append(name)
+        return recipients
 
     @classmethod
     def _parse_rows(
@@ -354,6 +402,10 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                         "category": category,
                         "title": title_candidates[-1],
                         "title_candidates": title_candidates,
+                        "recipients": cls._recipients(
+                            nominee,
+                            category,
+                        ),
                         "stable_key": (
                             f"{award_year}:"
                             f"{title_candidates[-1].casefold()}"
@@ -381,6 +433,10 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                                 "category": category,
                                 "title": title_candidates[-1],
                                 "title_candidates": title_candidates,
+                                "recipients": cls._recipients(
+                                    flat_cells[1],
+                                    category,
+                                ),
                                 "stable_key": (
                                     f"{award_year}:"
                                     f"{title_candidates[-1].casefold()}"

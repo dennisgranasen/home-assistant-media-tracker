@@ -61,6 +61,23 @@ STREAMING_TYPES = ("flatrate", "free", "ads")
 ALL_AVAILABILITY_TYPES = ("flatrate", "free", "ads", "rent", "buy")
 
 
+def _merge_person_wins(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge person-level award wins while preserving their metadata."""
+    merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for group in groups:
+        for win in group or []:
+            name = str(win.get("name") or "").strip()
+            role = str(win.get("role") or "").strip()
+            category = str(win.get("category") or "").strip()
+            if not name:
+                continue
+            merged.setdefault(
+                (name.casefold(), role.casefold(), category.casefold()),
+                {"name": name, "role": role, "category": category},
+            )
+    return list(merged.values())
+
+
 class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Coordinate TMDB data and local Media Watch state."""
 
@@ -84,6 +101,9 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._profile_region: str | None = None
         self._oscars = OscarsRepository(hass)
         self._award_tmdb_cache: dict[str, dict[str, Any] | None] = {}
+        self._watchlist_best_picture_index: (
+            dict[str, dict[str, Any]] | None
+        ) = None
 
     def _option(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
@@ -350,6 +370,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if isinstance(collection_data, dict)
             else None
         )
+        external_ids = details.get("external_ids") or {}
+        imdb_id = str(external_ids.get("imdb_id") or "").strip()
 
         return {
             "id": tmdb_id,
@@ -359,6 +381,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 movie.get("original_title"),
             ),
             "original_language": details.get("original_language"),
+            "imdb_id": imdb_id if imdb_id.startswith("tt") else None,
             "release_date": details.get(
                 "release_date",
                 movie.get("release_date"),
@@ -401,6 +424,56 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "watched": self.store.is_watched("movie", tmdb_id),
             "dismissed": self.store.is_dismissed("movie", tmdb_id),
         }
+
+    async def _async_enrich_watchlist_awards(
+        self,
+        movies: list[dict[str, Any]],
+    ) -> None:
+        """Attach cached Oscar Best Picture facts to watchlist movies."""
+        if not movies:
+            return
+
+        if self._watchlist_best_picture_index is None:
+            try:
+                records = await self._oscars.async_filter_films(
+                    year_from=None,
+                    year_to=None,
+                    category="BEST PICTURE",
+                    status=AWARD_STATUS_ANY,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Could not build watchlist Oscar index: %s",
+                    err,
+                )
+                return
+            self._watchlist_best_picture_index = {
+                str(record["imdb_id"]): record
+                for record in records
+                if str(record.get("imdb_id") or "").startswith("tt")
+            }
+
+        for movie in movies:
+            imdb_id = str(movie.get("imdb_id") or "")
+            facts = self._watchlist_best_picture_index.get(imdb_id)
+            if facts is None:
+                continue
+
+            award = {
+                "organization": "Academy Awards",
+                "source": AWARD_SOURCE_OSCARS,
+                "award_years": list(facts.get("award_years", [])),
+                "nominations": int(facts.get("nominations", 0)),
+                "wins": int(facts.get("wins", 0)),
+                "categories": list(facts.get("categories", [])),
+                "winning_categories": list(
+                    facts.get("winning_categories", [])
+                ),
+                "person_wins": list(facts.get("person_wins", [])),
+            }
+            movie["award"] = award
+            movie["awards"] = [award]
+            movie["award_summary"] = self._award_summary(movie)
 
 
     async def _enrich_tv_discovery(
@@ -985,6 +1058,13 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 }
             ),
+            "recipients": sorted(
+                {
+                    str(recipient)
+                    for award in awards
+                    for recipient in award.get("recipients", [])
+                }
+            ),
         }
 
     def _profile_post_filter(
@@ -1159,15 +1239,25 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             self._award_tmdb_cache[cache_key] = dict(item)
 
+        award_categories = list(award_item.get("categories", []))
+        recipients = list(award_item.get("recipients", []))
         item["award"] = {
             "organization": award_item.get("organization") or award_source,
             "source": award_source,
             "award_years": award_item.get("award_years", []),
             "nominations": award_item.get("nominations", 0),
             "wins": award_item.get("wins", 0),
-            "categories": award_item.get("categories", []),
+            "categories": award_categories,
             "winning_categories": award_item.get("winning_categories", []),
+            "recipients": recipients,
+            "person_wins": list(award_item.get("person_wins", [])),
         }
+        if len(award_categories) == 1 and recipients:
+            category = str(award_categories[0]).casefold()
+            if "director" in category or "directing" in category:
+                item["directors"] = recipients
+            elif "screenplay" in category or "writing" in category:
+                item["writers"] = recipients
         return item
 
     async def _award_profile_candidates(
@@ -1324,6 +1414,12 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     merged[key]["winning_categories"] = list(
                         item.get("winning_categories", [])
                     )
+                    merged[key]["recipients"] = list(
+                        item.get("recipients", [])
+                    )
+                    merged[key]["person_wins"] = list(
+                        item.get("person_wins", [])
+                    )
                     continue
 
                 existing = merged[key]
@@ -1331,11 +1427,16 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "award_years",
                     "categories",
                     "winning_categories",
+                    "recipients",
                 ):
                     existing[field] = sorted(
                         set(existing.get(field, []))
                         | set(item.get(field, []))
                     )
+                existing["person_wins"] = _merge_person_wins(
+                    existing.get("person_wins", []),
+                    item.get("person_wins", []),
+                )
                 existing["nominations"] = (
                     int(existing.get("nominations", 0))
                     + int(item.get("nominations", 0))
@@ -1497,11 +1598,16 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "award_years",
                     "categories",
                     "winning_categories",
+                    "recipients",
                 ):
                     existing_award[field] = sorted(
                         set(existing_award.get(field, []))
                         | set(item_award.get(field, []))
                     )
+                existing_award["person_wins"] = _merge_person_wins(
+                    existing_award.get("person_wins", []),
+                    item_award.get("person_wins", []),
+                )
                 existing_award["nominations"] = max(
                     int(existing_award.get("nominations", 0)),
                     int(item_award.get("nominations", 0)),
@@ -1584,6 +1690,19 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             "winning_categories", []
                         )
                     }
+                ),
+                "recipients": sorted(
+                    {
+                        recipient
+                        for award in awards
+                        for recipient in award.get("recipients", [])
+                    }
+                ),
+                "person_wins": _merge_person_wins(
+                    *[
+                        list(award.get("person_wins", []))
+                        for award in awards
+                    ]
                 ),
             }
 
@@ -1894,6 +2013,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             movie_details = await asyncio.gather(
                 *(self._enrich_movie(movie) for movie in visible_watchlist)
             )
+            await self._async_enrich_watchlist_awards(movie_details)
             tv_details = await asyncio.gather(
                 *(self._enrich_tv(show) for show in watchlist_tv)
             )

@@ -81,6 +81,7 @@ class OscarsAwardAdapter(AwardAdapter):
                 "nominations": item["nominations"],
                 "wins": item["wins"],
                 "winning_categories": item["winning_categories"],
+                "person_wins": item.get("person_wins", []),
                 "records": item.get("records", []),
             }
             for item in records

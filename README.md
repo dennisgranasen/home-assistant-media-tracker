@@ -827,3 +827,15 @@ is AST-checked so that:
   nominations and wins, winner state, organizations, years, categories and
   winning categories. It is derived from the existing `award`/`awards` data
   and performs no additional award or TMDB requests.
+- HKFAA person and crew categories expose the official English-transliterated
+  names in `award.recipients`. Director-only profiles also use those names in
+  `directors`, while screenplay-only profiles expose them in `writers`; the
+  Chinese recipient name is never used as the TMDB movie search title.
+- Movie watchlist items are matched against a cached historical Oscar Best
+  Picture index by IMDb ID and expose `award`, `awards` and `award_summary` for
+  matching nominees and winners. TMDB `external_ids` is appended to the
+  existing movie-details response, so this adds no per-film API request.
+- Oscar metadata preserves the dataset's named recipients. Film results also
+  carry `award.person_wins` for acting and directing winners from the same
+  configured award-year range, even when the profile itself selects a title
+  category such as Best Picture.

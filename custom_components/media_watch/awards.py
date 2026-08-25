@@ -70,7 +70,19 @@ class OscarsRepository:
                     row.get("CanonicalCategory") or ""
                 ).strip()
                 category = (row.get("Category") or "").strip()
-                winner = str(row.get("Winner") or "").strip().lower() == "true"
+                winner = (
+                    str(row.get("Winner") or "").strip().lower()
+                    == "true"
+                )
+                recipients = [
+                    value.strip()
+                    for value in str(row.get("Nominees") or "").split("|")
+                    if value.strip()
+                ]
+                if not recipients:
+                    name = str(row.get("Name") or "").strip()
+                    if name:
+                        recipients = [name]
 
                 # Early Academy rows can associate one nomination with more
                 # than one film. Split title and IMDb-ID pairs so filtering is
@@ -105,6 +117,7 @@ class OscarsRepository:
                             "film": title.strip(),
                             "imdb_id": imdb_id,
                             "winner": winner,
+                            "recipients": recipients,
                         }
                     )
 
@@ -136,13 +149,17 @@ class OscarsRepository:
         """Return award facts collapsed to one record per film."""
         records = await self.async_records()
 
-        selected = []
+        year_selected = []
         for record in records:
             year = int(record["award_year"])
             if year_from is not None and year < year_from:
                 continue
             if year_to is not None and year > year_to:
                 continue
+            year_selected.append(record)
+
+        selected = []
+        for record in year_selected:
             if category and category != "all":
                 if record.get("canonical_category") != category:
                     continue
@@ -178,6 +195,31 @@ class OscarsRepository:
                     )
             item["records"].append(record)
 
+        person_wins_by_film: dict[
+            str, list[dict[str, str]]
+        ] = defaultdict(list)
+        for record in year_selected:
+            if not record.get("winner"):
+                continue
+            canonical = str(record.get("canonical_category") or "")
+            normalized_category = canonical.upper()
+            if normalized_category.startswith(("ACTOR", "ACTRESS")):
+                role = "acting"
+            elif normalized_category.startswith("DIRECTING"):
+                role = "directing"
+            else:
+                continue
+
+            wins = person_wins_by_film[record["imdb_id"]]
+            for recipient in record.get("recipients", []):
+                person_win = {
+                    "name": str(recipient),
+                    "role": role,
+                    "category": canonical,
+                }
+                if person_win not in wins:
+                    wins.append(person_win)
+
         result = []
         for item in grouped.values():
             wins = int(item["wins"])
@@ -203,6 +245,9 @@ class OscarsRepository:
                     "wins": wins,
                     "winning_categories": sorted(
                         item["winning_categories"]
+                    ),
+                    "person_wins": person_wins_by_film.get(
+                        item["imdb_id"], []
                     ),
                     "records": item["records"],
                 }

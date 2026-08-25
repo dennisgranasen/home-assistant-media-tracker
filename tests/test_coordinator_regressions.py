@@ -112,6 +112,7 @@ def test_movie_enrichment_exposes_ui_metadata_without_extra_endpoint() -> None:
                 "title": "Localized title",
                 "original_title": "Original title",
                 "original_language": "fr",
+                "external_ids": {"imdb_id": "tt1234567"},
                 "tagline": "",
                 "runtime": 123,
                 "production_countries": [
@@ -157,6 +158,7 @@ def test_movie_enrichment_exposes_ui_metadata_without_extra_endpoint() -> None:
     assert result["tagline"] == "Fallback tagline"
     assert result["runtime"] == 123
     assert result["original_language"] == "fr"
+    assert result["imdb_id"] == "tt1234567"
     assert result["production_countries"] == [
         {"code": "FR", "name": "France"}
     ]
@@ -179,6 +181,7 @@ def test_award_summary_uses_source_details_without_double_counting_any() -> None
                 "award_years": [2024],
                 "categories": ["Best Picture"],
                 "winning_categories": ["Best Picture"],
+                "recipients": ["Director One"],
                 "nominations": 1,
                 "wins": 1,
             },
@@ -188,6 +191,7 @@ def test_award_summary_uses_source_details_without_double_counting_any() -> None
                 "award_years": [2024],
                 "categories": ["Best Film", "Director"],
                 "winning_categories": [],
+                "recipients": ["Writer One", "Writer Two"],
                 "nominations": 2,
                 "wins": 0,
             },
@@ -205,6 +209,98 @@ def test_award_summary_uses_source_details_without_double_counting_any() -> None
         "award_years": [2024],
         "categories": ["Best Film", "Best Picture", "Director"],
         "winning_categories": ["Best Picture"],
+        "recipients": ["Director One", "Writer One", "Writer Two"],
+    }
+
+
+def test_award_recipient_overrides_localized_director_name() -> None:
+    coordinator = _coordinator()
+
+    async def enrich(self, candidate):
+        return {"id": candidate["id"], "directors": ["梁栢堅"]}
+
+    coordinator._enrich_movie = MethodType(enrich, coordinator)
+
+    result = asyncio.run(
+        coordinator._resolve_award_title(
+            {
+                "tmdb_id": 7,
+                "categories": ["Best Director"],
+                "recipients": ["Patrick Leung Pak Kin"],
+            },
+            media_type="movie",
+            award_source="hong_kong_film_awards",
+        )
+    )
+
+    assert result["directors"] == ["Patrick Leung Pak Kin"]
+    assert result["award"]["recipients"] == [
+        "Patrick Leung Pak Kin"
+    ]
+
+
+def test_watchlist_movies_receive_cached_best_picture_awards() -> None:
+    class Oscars:
+        calls = 0
+
+        async def async_filter_films(self, **kwargs):
+            self.calls += 1
+            assert kwargs == {
+                "year_from": None,
+                "year_to": None,
+                "category": "BEST PICTURE",
+                "status": "any",
+            }
+            return [
+                {
+                    "imdb_id": "tt1234567",
+                    "award_years": [2024],
+                    "categories": ["BEST PICTURE"],
+                    "nominations": 1,
+                    "wins": 1,
+                    "winning_categories": ["BEST PICTURE"],
+                    "person_wins": [],
+                }
+            ]
+
+    coordinator = _coordinator()
+    coordinator._oscars = Oscars()
+    coordinator._watchlist_best_picture_index = None
+    movies = [
+        {"id": 1, "imdb_id": "tt1234567"},
+        {"id": 2, "imdb_id": "tt7654321"},
+    ]
+
+    asyncio.run(coordinator._async_enrich_watchlist_awards(movies))
+    asyncio.run(coordinator._async_enrich_watchlist_awards(movies))
+
+    assert coordinator._oscars.calls == 1
+    assert movies[0]["award"]["source"] == "oscars"
+    assert movies[0]["award_summary"]["winner"] is True
+    assert movies[0]["award_summary"]["winning_categories"] == [
+        "BEST PICTURE"
+    ]
+    assert "award" not in movies[1]
+
+
+def test_movie_details_append_credits_and_external_ids() -> None:
+    api = object.__new__(TMDBApi)
+    captured: dict[str, object] = {}
+
+    async def request(self, method, path, **kwargs):
+        captured.update(
+            {"method": method, "path": path, **kwargs}
+        )
+        return {}
+
+    api._request = MethodType(request, api)
+
+    asyncio.run(api.get_movie_details(7, "sv-SE"))
+
+    assert captured["path"] == "/movie/7"
+    assert captured["params"] == {
+        "language": "sv-SE",
+        "append_to_response": "credits,external_ids",
     }
 
 

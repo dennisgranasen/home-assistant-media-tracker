@@ -92,6 +92,7 @@ def aggregate_records(records: list[dict[str, Any]], status: str) -> list[dict[s
                 "nominations": 0,
                 "wins": 0,
                 "winning_categories": set(),
+                "recipients": set(),
                 "records": [],
             },
         )
@@ -103,6 +104,9 @@ def aggregate_records(records: list[dict[str, Any]], status: str) -> list[dict[s
         category = str(record.get("category") or "").strip()
         if category:
             item["categories"].add(category)
+        for recipient in record.get("recipients", []):
+            if recipient:
+                item["recipients"].add(str(recipient))
         item["nominations"] += 1
         if record.get("winner"):
             item["wins"] += 1
@@ -126,6 +130,7 @@ def aggregate_records(records: list[dict[str, Any]], status: str) -> list[dict[s
                 "award_years": sorted(item["award_years"]),
                 "categories": sorted(item["categories"]),
                 "winning_categories": sorted(item["winning_categories"]),
+                "recipients": sorted(item["recipients"]),
             }
         )
     result.sort(key=lambda x: (-(max(x["award_years"]) if x["award_years"] else 0), -x["wins"], -x["nominations"], x["title"]))

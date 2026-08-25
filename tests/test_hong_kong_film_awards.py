@@ -60,6 +60,50 @@ def test_repeated_acronym_in_bilingual_title_is_not_duplicated() -> None:
     assert candidates[-1] == "CIAO UFO"
 
 
+def test_person_category_uses_english_recipient_and_only_film_as_title() -> None:
+    html = """
+    <table><tr>
+      <td>最佳導演<br>Best Director</td>
+      <td><ol><li>梁栢堅（再見UFO）<br>
+          Patrick Leung Pak Kin (CIAO UFO)</li></ol></td>
+      <td>梁栢堅（再見UFO）<br>
+          Patrick Leung Pak Kin (CIAO UFO)</td>
+    </tr></table>
+    """
+    parser = _TableTextParser(number_ordered_list_items=True)
+    parser.feed(html)
+
+    records = HongKongFilmAwardsAdapter._parse_rows(
+        parser.rows,
+        ceremony=44,
+    )
+
+    assert len(records) == 1
+    assert records[0]["title_candidates"] == ["CIAO UFO"]
+    assert records[0]["recipients"] == ["Patrick Leung Pak Kin"]
+    assert records[0]["winner"] is True
+
+    aggregated = asyncio.run(
+        HongKongFilmAwardsAdapter(
+            SimpleNamespace(
+                data={
+                    "media_watch_award_http_cache": {
+                        f"table:numbered:{HongKongFilmAwardsAdapter._url(44)}": parser.rows,
+                    }
+                }
+            )
+        ).async_filter_titles(
+            media_type="movie",
+            year_from=2026,
+            year_to=2026,
+            category="Best Director",
+            status="winner",
+        )
+    )
+    assert aggregated[0]["title"] == "CIAO UFO"
+    assert aggregated[0]["recipients"] == ["Patrick Leung Pak Kin"]
+
+
 def test_adapter_uses_numbered_table_variant_for_winner_filter() -> None:
     html = """
     <table><tr>

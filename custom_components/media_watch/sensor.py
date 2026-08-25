@@ -382,6 +382,7 @@ class MovieWatchlistFeedSensor(_MediaTrackerFeedSensor):
             "tmdb_id": item.get("id"),
             "title": item.get("title"),
             "original_title": item.get("original_title"),
+            "imdb_id": item.get("imdb_id"),
             "original_language": item.get("original_language"),
             "release_date": item.get("release_date"),
             "vote_average": item.get("vote_average"),
@@ -394,6 +395,7 @@ class MovieWatchlistFeedSensor(_MediaTrackerFeedSensor):
             ),
             "collection": item.get("collection"),
             "directors": item.get("directors", []),
+            "writers": item.get("writers", []),
             "cast": item.get("cast", []),
             "genre_ids": item.get("genre_ids", []),
             "genres": item.get("genres", []),
@@ -412,6 +414,9 @@ class MovieWatchlistFeedSensor(_MediaTrackerFeedSensor):
             "available_on_my_services": item.get(
                 "available_on_my_services", False
             ),
+            "award": item.get("award"),
+            "awards": item.get("awards", []),
+            "award_summary": item.get("award_summary"),
             "deep_link": (
                 "https://www.themoviedb.org/movie/"
                 f"{item.get('id')}"
@@ -435,6 +440,7 @@ def _movie_feed_item(
         "tmdb_id": item.get("id"),
         "title": item.get("title"),
         "original_title": item.get("original_title"),
+        "imdb_id": item.get("imdb_id"),
         "original_language": item.get("original_language"),
         "release_date": item.get("release_date"),
         "vote_average": item.get("vote_average"),
@@ -447,6 +453,7 @@ def _movie_feed_item(
         ),
         "collection": item.get("collection"),
         "directors": item.get("directors", []),
+        "writers": item.get("writers", []),
         "cast": item.get("cast", []),
         "poster": (
             f"https://image.tmdb.org/t/p/w500{item['poster_path']}"
@@ -743,6 +750,7 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
             "tmdb_id": item.get("id"),
             "title": item.get("title"),
             "original_title": item.get("original_title"),
+            "imdb_id": item.get("imdb_id"),
             "original_language": item.get("original_language"),
             "release_date": item.get("release_date"),
             "vote_average": item.get("vote_average"),
@@ -755,6 +763,7 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
             ),
             "collection": item.get("collection"),
             "directors": item.get("directors", []),
+            "writers": item.get("writers", []),
             "cast": item.get("cast", []),
             "poster": self._poster_url(
                 item.get("poster_path")
@@ -765,6 +774,9 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
             "available_on_my_services": item.get(
                 "available_on_my_services", False
             ),
+            "award": item.get("award"),
+            "awards": item.get("awards", []),
+            "award_summary": item.get("award_summary"),
             "watched": item.get("watched", False),
             "dismissed": item.get("dismissed", False),
             "deep_link": (

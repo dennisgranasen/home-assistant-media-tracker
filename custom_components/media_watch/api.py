@@ -252,7 +252,7 @@ class TMDBApi:
             f"/movie/{tmdb_id}",
             params={
                 "language": language,
-                "append_to_response": "credits",
+                "append_to_response": "credits,external_ids",
             },
             include_session=False,
         )
