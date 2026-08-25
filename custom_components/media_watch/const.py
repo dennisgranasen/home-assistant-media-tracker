@@ -55,6 +55,7 @@ SERVICE_MARK_EPISODE_WATCHED = "mark_episode_watched"
 SERVICE_MARK_EPISODE_UNWATCHED = "mark_episode_unwatched"
 SERVICE_MARK_SEASONS_WATCHED = "mark_seasons_watched"
 SERVICE_MARK_SEASONS_UNWATCHED = "mark_seasons_unwatched"
+SERVICE_MARK_RELEASED_EPISODES_WATCHED = "mark_released_episodes_watched"
 SERVICE_UPCOMING_EPISODES = "upcoming_episodes"
 
 ATTR_MEDIA_TYPE = "media_type"

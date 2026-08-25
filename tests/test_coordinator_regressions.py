@@ -16,6 +16,7 @@ from custom_components.media_watch.const import (
     PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
 )
 from custom_components.media_watch.coordinator import MediaWatchCoordinator
+from custom_components.media_watch.store import MediaWatchStore
 from custom_components.media_watch.award_adapters.web_common import (
     aggregate_records,
 )
@@ -155,6 +156,86 @@ def test_legacy_release_dates_apply_to_post_filter() -> None:
     result = coordinator._profile_post_filter(items, profile, "movie")
 
     assert [item["id"] for item in result] == [2, 3]
+
+
+def test_mark_released_episodes_keeps_future_episodes_unwatched() -> None:
+    class Api:
+        async def get_tv_details(self, _tmdb_id, _language):
+            return {
+                "seasons": [
+                    {"season_number": 0},
+                    {"season_number": 1},
+                    {"season_number": 2},
+                ]
+            }
+
+        async def get_tv_season(self, _tmdb_id, season, _language):
+            return {
+                "episodes": [
+                    {
+                        "episode_number": 1,
+                        "air_date": (
+                            "2026-08-24"
+                            if season == 1
+                            else "2027-01-01"
+                        ),
+                    },
+                    {
+                        "episode_number": 2,
+                        "air_date": "2026-08-26",
+                    },
+                ]
+            }
+
+    class Store:
+        released = None
+
+        async def set_released_episodes_watched(self, tmdb_id, released):
+            self.released = (tmdb_id, released)
+
+    coordinator = _coordinator()
+    coordinator.api = Api()
+    coordinator.store = Store()
+    coordinator.entry = SimpleNamespace(
+        options={"language": "sv-SE", "fallback_language": "en-US"}
+    )
+    coordinator._profile_language = None
+
+    asyncio.run(coordinator.async_mark_released_episodes_watched(1399))
+
+    assert coordinator.store.released == (1399, {1: [1], 2: []})
+
+
+def test_released_episode_storage_replaces_whole_season_markers() -> None:
+    store = object.__new__(MediaWatchStore)
+    store._data = {
+        "watched_movies": [],
+        "watched_tv": [],
+        "dismissed_movies": [],
+        "dismissed_tv": [],
+        "tv_progress": {
+            "1399": {
+                "watched_seasons": [1, 2, 3],
+                "watched_episodes": {"1": [99], "2": [99]},
+            }
+        },
+    }
+
+    async def save(self):
+        return None
+
+    store.async_save = MethodType(save, store)
+    asyncio.run(
+        store.set_released_episodes_watched(
+            1399,
+            {1: [1, 2, 2], 2: []},
+        )
+    )
+
+    assert store.tv_progress(1399) == {
+        "watched_seasons": [3],
+        "watched_episodes": {"1": [1, 2]},
+    }
 
 
 def test_profile_post_filter_excludes_watchlist_watched_and_dismissed() -> None:

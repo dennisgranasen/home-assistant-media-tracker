@@ -105,6 +105,18 @@ mark_seasons_watched:
       selector:
         boolean:
 
+mark_released_episodes_watched:
+  name: Mark released episodes as watched
+  description: Mark only episodes with an air date of today or earlier as watched. Future episodes and season 0 specials remain unwatched.
+  fields:
+    tmdb_id:
+      name: TMDB ID
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+
 mark_seasons_unwatched:
   name: Mark seasons as unwatched
   description: Reset one, several, or all regular seasons of a TV show.

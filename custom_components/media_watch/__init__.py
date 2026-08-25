@@ -36,6 +36,7 @@ from .const import (
     SERVICE_FOLLOW,
     SERVICE_MARK_EPISODE_UNWATCHED,
     SERVICE_MARK_EPISODE_WATCHED,
+    SERVICE_MARK_RELEASED_EPISODES_WATCHED,
     SERVICE_MARK_SEASONS_UNWATCHED,
     SERVICE_MARK_SEASONS_WATCHED,
     SERVICE_MARK_UNWATCHED,
@@ -307,6 +308,13 @@ async def async_setup_entry(
         )
         schedule_refresh()
 
+    async def mark_released_episodes_watched(call: ServiceCall) -> None:
+        """Mark only episodes that have aired as watched."""
+        await coordinator.async_mark_released_episodes_watched(
+            int(call.data[ATTR_TMDB_ID])
+        )
+        schedule_refresh()
+
 
     async def upcoming_episodes(
         call: ServiceCall,
@@ -450,6 +458,14 @@ async def async_setup_entry(
     )
     hass.services.async_register(
         DOMAIN,
+        SERVICE_MARK_RELEASED_EPISODES_WATCHED,
+        mark_released_episodes_watched,
+        schema=vol.Schema(
+            {vol.Required(ATTR_TMDB_ID): cv.positive_int}
+        ),
+    )
+    hass.services.async_register(
+        DOMAIN,
         SERVICE_UPCOMING_EPISODES,
         upcoming_episodes,
         schema=UPCOMING_SCHEMA,
@@ -501,6 +517,7 @@ async def async_unload_entry(
                 SERVICE_MARK_EPISODE_WATCHED,
                 SERVICE_MARK_SEASONS_UNWATCHED,
                 SERVICE_MARK_SEASONS_WATCHED,
+                SERVICE_MARK_RELEASED_EPISODES_WATCHED,
                 SERVICE_MARK_UNWATCHED,
                 SERVICE_DISMISS,
                 SERVICE_UNDISMISS,

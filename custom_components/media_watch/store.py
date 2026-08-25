@@ -204,6 +204,28 @@ class MediaWatchStore:
 
         await self.async_save()
 
+    async def set_released_episodes_watched(
+        self,
+        tmdb_id: int,
+        episodes_by_season: dict[int, list[int]],
+    ) -> None:
+        """Replace whole-season markers with released episode progress."""
+        progress = self._tv_progress(tmdb_id)
+        watched_seasons = progress.setdefault("watched_seasons", [])
+        watched_episodes = progress.setdefault("watched_episodes", {})
+
+        for season, episodes in episodes_by_season.items():
+            while season in watched_seasons:
+                watched_seasons.remove(season)
+
+            unique_episodes = sorted({int(episode) for episode in episodes})
+            if unique_episodes:
+                watched_episodes[str(season)] = unique_episodes
+            else:
+                watched_episodes.pop(str(season), None)
+
+        await self.async_save()
+
     @property
     def watched_movies(self) -> list[int]:
         return list(self._data["watched_movies"])

@@ -137,6 +137,13 @@ Top-film awards from all compatible movie adapters are also attached to films
 after they move into the Watchlist. A failure in one adapter does not suppress
 facts from the others.
 
+### Released-episode progress
+
+`media_watch.mark_released_episodes_watched` records only regular episodes
+whose TMDB `air_date` is today or earlier. Progress is stored per episode, so
+future episodes added to an existing season and entirely new seasons both
+remain unwatched. Season 0 specials are excluded.
+
 ## Entities
 
 Every entry creates these core sensors:

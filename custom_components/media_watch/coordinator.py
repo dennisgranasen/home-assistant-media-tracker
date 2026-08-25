@@ -140,6 +140,48 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _option(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
 
+    async def async_mark_released_episodes_watched(
+        self,
+        tmdb_id: int,
+    ) -> None:
+        """Mark aired regular episodes watched, never future episodes."""
+        details = await self.api.get_tv_details(tmdb_id, self.language)
+        season_numbers = sorted(
+            {
+                int(season.get("season_number", 0))
+                for season in details.get("seasons", [])
+                if int(season.get("season_number", 0)) > 0
+            }
+        )
+        season_details = await asyncio.gather(
+            *(
+                self.api.get_tv_season(
+                    tmdb_id,
+                    season_number,
+                    self.language,
+                )
+                for season_number in season_numbers
+            )
+        )
+        today = dt_util.now().date().isoformat()
+        released = {
+            season_number: sorted(
+                {
+                    int(episode.get("episode_number", 0))
+                    for episode in season_data.get("episodes", [])
+                    if int(episode.get("episode_number", 0)) > 0
+                    and episode.get("air_date")
+                    and str(episode["air_date"]) <= today
+                }
+            )
+            for season_number, season_data in zip(
+                season_numbers,
+                season_details,
+                strict=True,
+            )
+        }
+        await self.store.set_released_episodes_watched(tmdb_id, released)
+
     @property
     def use_profile_language(self) -> bool:
         return bool(
