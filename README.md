@@ -738,3 +738,22 @@ Golden Globes Television, Primetime Emmy, Cannes and Hong Kong Film Awards.
 
 Discovery profile sensors also expose award category/status/year diagnostics as
 top-level attributes, making empty award queues easier to debug.
+
+
+### v0.17.4 optional year selector fix
+
+Fixed Home Assistant options-flow validation errors such as:
+
+```text
+expected float
+```
+
+The optional release-year and rolling-age NumberSelector fields no longer
+receive `None` as a default value. When unset, the schema now omits the default
+entirely, so Home Assistant treats the fields as genuinely optional.
+
+This affects:
+
+- Release year from
+- Release year to
+- Maximum age in years (rolling)

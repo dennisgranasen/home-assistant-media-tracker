@@ -997,9 +997,13 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
-                    vol.Optional(
-                        "release_year_from",
-                        default=release_year_from,
+                    (
+                        vol.Optional(
+                            "release_year_from",
+                            default=release_year_from,
+                        )
+                        if release_year_from is not None
+                        else vol.Optional("release_year_from")
                     ): NumberSelector(
                         NumberSelectorConfig(
                             min=1900,
@@ -1008,9 +1012,13 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                             mode=NumberSelectorMode.BOX,
                         )
                     ),
-                    vol.Optional(
-                        "release_year_to",
-                        default=release_year_to,
+                    (
+                        vol.Optional(
+                            "release_year_to",
+                            default=release_year_to,
+                        )
+                        if release_year_to is not None
+                        else vol.Optional("release_year_to")
                     ): NumberSelector(
                         NumberSelectorConfig(
                             min=1900,
@@ -1019,9 +1027,13 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                             mode=NumberSelectorMode.BOX,
                         )
                     ),
-                    vol.Optional(
-                        "release_max_age_years",
-                        default=d("release_max_age_years", None),
+                    (
+                        vol.Optional(
+                            "release_max_age_years",
+                            default=int(d("release_max_age_years", 0)),
+                        )
+                        if d("release_max_age_years", None) not in (None, "")
+                        else vol.Optional("release_max_age_years")
                     ): NumberSelector(
                         NumberSelectorConfig(
                             min=0,
