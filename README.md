@@ -529,3 +529,70 @@ Added a film award adapter for the Hong Kong Film Awards using the official
 HKFAA historical archive. It participates in the same dynamic award profile
 UI and can be combined with year ranges, categories, winner/nominee status,
 ratings, genres and provider filters.
+
+
+## Google TV / Android TV development track
+
+A future TV integration is documented in
+[`docs/GOOGLE_TV_INTEGRATION.md`](docs/GOOGLE_TV_INTEGRATION.md).
+
+The proposed architecture keeps Media Watch as the source of recommendation
+logic and watched state, with a thin Android TV bridge capable of targeting
+both legacy TvProvider/Preview Channels and Google Engage. This work is
+deliberately not part of the current runtime integration.
+
+
+### v0.16.0 discovery entities and category taxonomy
+
+Each configured discovery profile is a dedicated Home Assistant sensor.
+
+The sensor:
+
+- has a stable unique ID based on the config entry and profile ID
+- suggests an object ID such as `sensor.media_watch_modern_horror`
+- uses the queue length as its sensor state
+- exposes the card payload in the common `items` attribute
+- exposes profile/media/award metadata as attributes
+
+Example:
+
+```yaml
+type: custom:media-tracker-card
+entity: sensor.media_watch_modern_horror
+title: Modern Horror
+```
+
+Award category configuration now supports two category modes:
+
+1. **Generic category** — choose a stable Media Watch concept such as Best
+   Film, Director, Screenplay, Drama Series or Comedy Series. Media Watch maps
+   that concept to the selected award provider's actual category value(s).
+2. **Award-specific category** — choose directly from the selected adapter's
+   category dropdown.
+
+The award-specific list is always loaded from the selected adapter. The generic
+list is reduced to concepts that can actually map to categories exposed by that
+adapter.
+
+
+### v0.16.1 TMDB genre selectors
+
+Discovery/recommendation profiles no longer require users to type TMDB genre
+names or IDs.
+
+After the profile media type has been selected, Media Watch requests the
+appropriate TMDB genre catalogue and displays localized multi-select dropdowns
+for:
+
+- Include genres
+- Exclude genres
+
+The UI displays names such as `Horror`, `Romance` or their localized
+equivalents while the profile stores stable TMDB genre IDs internally.
+
+Movie and TV genre catalogues are fetched separately. This avoids incorrect
+cross-media assumptions such as movie `Science Fiction` (878) versus TV
+`Sci-Fi & Fantasy` (10765).
+
+Legacy profiles that contain comma-separated genre IDs remain compatible and
+are normalized into the new selector values when edited.

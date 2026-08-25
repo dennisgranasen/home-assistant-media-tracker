@@ -76,13 +76,15 @@
       },
       "profile_award_details": {
         "title": "Award-filter",
-        "description": "Kategorierna hämtas från vald award-källa, så ogiltiga kombinationer mellan källa och kategori kan inte väljas.",
+        "description": "Välj en generell kategori för enklare konfiguration mellan olika filmpriser, eller använd den awardspecifika listan. Listorna byggs från vald adapter och fria ogiltiga kategorinamn används inte.",
         "data": {
           "award_preset": "Snabblista",
-          "award_category": "Kategori",
+          "award_category": "Awardspecifik kategori",
           "award_status": "Status",
           "award_year_from": "Award-år från",
-          "award_year_to": "Award-år till"
+          "award_year_to": "Award-år till",
+          "award_category_mode": "Kategoriläge",
+          "award_generic_category": "Generell kategori"
         }
       },
       "profile_filters": {
@@ -91,15 +93,16 @@
           "provider_scope": "Providers",
           "min_rating": "Minsta betyg",
           "min_votes": "Minsta antal röster",
-          "include_genres": "Inkludera genre-ID:n",
-          "exclude_genres": "Exkludera genre-ID:n",
+          "include_genres": "Inkludera genrer",
+          "exclude_genres": "Exkludera genrer",
           "genre_match": "Genrematchning",
           "release_date_gte": "Utgiven tidigast",
           "release_date_lte": "Utgiven senast",
           "sort_by": "Sortering",
           "max_pages": "TMDB-sidor",
           "limit": "Storlek på feed"
-        }
+        },
+        "description": "Genrer hämtas från TMDB för den valda mediatypen och sparas internt med stabila genre-ID:n."
       }
     },
     "error": {

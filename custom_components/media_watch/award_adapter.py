@@ -23,6 +23,7 @@ class AwardAdapter(ABC):
     """Base interface for award providers.
 
     An adapter owns:
+    - source-specific category vocabulary; generic category taxonomy is resolved above adapters
     - loading/caching its historical source data
     - normalizing category names
     - filtering award records by year/category/status

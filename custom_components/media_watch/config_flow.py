@@ -24,6 +24,7 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
 )
 
+from .award_taxonomy import resolve_generic_category_options
 from .award_registry import async_categories, providers_for_media_type
 from .api import TMDBApi, TMDBAuthError, TMDBError
 from .const import (
@@ -675,7 +676,7 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> FlowResult:
-        """Show only categories valid for the selected award source."""
+        """Configure award filters with safe category dropdowns."""
         media_type = str(
             self._profile_draft.get("media_type", "movie")
         )
@@ -685,32 +686,43 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
             )
         )
 
-        category_options = await async_categories(
+        source_category_options = await async_categories(
             self.hass,
             award_source,
             media_type,
         )
-
-        # A configured category may have disappeared/been renamed in the
-        # backing source. Do not allow a now-invalid value back into the flow.
-        category_values = {
-            option["value"] for option in category_options
-        }
-        current_category = str(
-            self._profile_draft.get("award_category", "all")
+        generic_category_options = resolve_generic_category_options(
+            award_source,
+            media_type,
+            source_category_options,
         )
-        if current_category not in category_values:
-            current_category = "all"
 
         if user_input is not None:
             self._profile_draft.update(user_input)
             return await self.async_step_profile_filters()
 
+        source_values = {
+            option["value"] for option in source_category_options
+        }
+        current_source_category = str(
+            self._profile_draft.get("award_category", "all")
+        )
+        if current_source_category not in source_values:
+            current_source_category = "all"
+
+        generic_values = {
+            option["value"] for option in generic_category_options
+        }
+        current_generic_category = str(
+            self._profile_draft.get(
+                "award_generic_category", "all"
+            )
+        )
+        if current_generic_category not in generic_values:
+            current_generic_category = "all"
+
         return self.async_show_form(
             step_id="profile_award_details",
-            description_placeholders={
-                "source": award_source,
-            },
             data_schema=vol.Schema(
                 {
                     vol.Required(
@@ -723,24 +735,72 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                         SelectSelectorConfig(
                             options=(
                                 [
-                                    {"value": AWARD_PRESET_NONE, "label": "Custom"},
-                                    {"value": AWARD_PRESET_LATEST_WINNERS, "label": "Latest awards – all winners"},
-                                    {"value": AWARD_PRESET_LATEST_NOMINEES, "label": "Latest awards – all nominated/selected titles"},
+                                    {
+                                        "value": AWARD_PRESET_NONE,
+                                        "label": "Custom",
+                                    },
+                                    {
+                                        "value": AWARD_PRESET_LATEST_WINNERS,
+                                        "label": "Latest awards – all winners",
+                                    },
+                                    {
+                                        "value": AWARD_PRESET_LATEST_NOMINEES,
+                                        "label": "Latest awards – all nominated/selected titles",
+                                    },
                                 ]
-                                + ([
-                                    {"value": AWARD_PRESET_BEST_PICTURE_WINNERS, "label": "All top-film-category winners"},
-                                    {"value": AWARD_PRESET_BEST_PICTURE_NOMINEES, "label": "All top-film-category nominees"},
-                                ] if media_type == "movie" else [])
+                                + (
+                                    [
+                                        {
+                                            "value": AWARD_PRESET_BEST_PICTURE_WINNERS,
+                                            "label": "All top-film-category winners",
+                                        },
+                                        {
+                                            "value": AWARD_PRESET_BEST_PICTURE_NOMINEES,
+                                            "label": "All top-film-category nominees",
+                                        },
+                                    ]
+                                    if media_type == "movie"
+                                    else []
+                                )
                             ),
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
                     vol.Required(
-                        "award_category",
-                        default=current_category,
+                        "award_category_mode",
+                        default=self._profile_draft.get(
+                            "award_category_mode", "generic"
+                        ),
                     ): SelectSelector(
                         SelectSelectorConfig(
-                            options=category_options,
+                            options=[
+                                {
+                                    "value": "generic",
+                                    "label": "Generic category",
+                                },
+                                {
+                                    "value": "source",
+                                    "label": "Award-specific category",
+                                },
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        "award_generic_category",
+                        default=current_generic_category,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=generic_category_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        "award_category",
+                        default=current_source_category,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=source_category_options,
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
@@ -789,6 +849,75 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
             ),
         )
 
+    async def _profile_genre_options(
+        self,
+        media_type: str,
+    ) -> list[SelectOptionDict]:
+        """Return localized TMDB genres for one profile media type."""
+        api = TMDBApi(
+            async_get_clientsession(self.hass),
+            self.config_entry.data[CONF_ACCESS_TOKEN],
+            self.config_entry.data[CONF_SESSION_ID],
+        )
+
+        options = self.config_entry.options
+        language = str(
+            options.get(
+                CONF_LANGUAGE,
+                self.config_entry.data.get(
+                    CONF_LANGUAGE,
+                    DEFAULT_LANGUAGE,
+                ),
+            )
+        )
+
+        try:
+            if media_type == "tv":
+                genres = await api.get_tv_genres(language)
+            else:
+                genres = await api.get_movie_genres(language)
+        except TMDBError:
+            # Genre IDs are stable. Falling back to English labels keeps the
+            # form usable even if the configured locale cannot be retrieved.
+            try:
+                if media_type == "tv":
+                    genres = await api.get_tv_genres("en-US")
+                else:
+                    genres = await api.get_movie_genres("en-US")
+            except TMDBError:
+                genres = []
+
+        return [
+            SelectOptionDict(
+                value=str(genre["id"]),
+                label=str(genre["name"]),
+            )
+            for genre in sorted(
+                genres,
+                key=lambda item: str(item.get("name", "")).casefold(),
+            )
+            if genre.get("id") is not None
+            and genre.get("name")
+        ]
+
+    @staticmethod
+    def _genre_defaults(value: Any) -> list[str]:
+        """Normalize legacy comma-separated genre IDs for multiselect UI."""
+        if value is None:
+            return []
+
+        if isinstance(value, (list, tuple, set)):
+            raw = value
+        else:
+            raw = str(value).replace(";", ",").split(",")
+
+        result: list[str] = []
+        for item in raw:
+            text = str(item).strip()
+            if text and text not in result:
+                result.append(text)
+        return result
+
     async def async_step_profile_filters(
         self,
         user_input: dict[str, Any] | None = None,
@@ -803,6 +932,27 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
         )
 
         media_type = str(d("media_type", "movie"))
+        genre_options = await self._profile_genre_options(media_type)
+        valid_genre_ids = {
+            option.value
+            for option in genre_options
+        }
+
+        include_defaults = [
+            value
+            for value in self._genre_defaults(
+                d("include_genres", [])
+            )
+            if value in valid_genre_ids
+        ]
+        exclude_defaults = [
+            value
+            for value in self._genre_defaults(
+                d("exclude_genres", [])
+            )
+            if value in valid_genre_ids
+        ]
+
         sort_options = [
             {
                 "value": "popularity.desc",
@@ -895,12 +1045,24 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                     ),
                     vol.Optional(
                         "include_genres",
-                        default=d("include_genres", ""),
-                    ): TextSelector(TextSelectorConfig()),
+                        default=include_defaults,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=genre_options,
+                            multiple=True,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                     vol.Optional(
                         "exclude_genres",
-                        default=d("exclude_genres", ""),
-                    ): TextSelector(TextSelectorConfig()),
+                        default=exclude_defaults,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=genre_options,
+                            multiple=True,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
                     vol.Required(
                         "genre_match",
                         default=d("genre_match", "any"),
@@ -990,6 +1152,24 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
         for key in (
             "include_genres",
             "exclude_genres",
+        ):
+            value = profile.get(key, [])
+            if isinstance(value, (list, tuple, set)):
+                profile[key] = [
+                    int(item)
+                    for item in value
+                    if str(item).strip().isdigit()
+                ]
+            else:
+                profile[key] = [
+                    int(item.strip())
+                    for item in str(value)
+                    .replace(";", ",")
+                    .split(",")
+                    if item.strip().isdigit()
+                ]
+
+        for key in (
             "release_date_gte",
             "release_date_lte",
             "award_year_from",

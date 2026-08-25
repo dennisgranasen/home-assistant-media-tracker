@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .awards import OscarsRepository
+from .award_taxonomy import resolve_source_categories
 from .award_registry import create_adapter
 from .api import TMDBApi, TMDBError
 from .const import (
@@ -997,56 +998,148 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self,
         profile: dict[str, Any],
         *,
-        media_type: str,
-        award_source: str,
         resolution_limit: int,
     ) -> list[dict[str, Any]]:
-        """Build candidate titles through any registered award adapter."""
-        adapter = create_adapter(self.hass, award_source)
-        if adapter is None or media_type not in adapter.info.media_types:
+        """Build an award candidate set using any registered adapter."""
+        source = str(profile.get("award_source", AWARD_SOURCE_NONE))
+        adapter = create_adapter(self.hass, source)
+        if adapter is None:
             return []
 
-        preset = str(profile.get("award_preset", AWARD_PRESET_NONE)).lower()
+        media_type = str(profile.get("media_type", "movie"))
+        if media_type not in adapter.info.media_types:
+            return []
+
+        preset = str(
+            profile.get("award_preset", AWARD_PRESET_NONE)
+        ).lower()
         latest_year = await adapter.async_latest_award_year(media_type)
+
         year_from_raw = profile.get("award_year_from")
         year_to_raw = profile.get("award_year_to")
-        year_from = int(year_from_raw) if year_from_raw not in (None, "") else None
-        year_to = int(year_to_raw) if year_to_raw not in (None, "") else None
-        category = str(profile.get("award_category", "all") or "all")
-        status = str(profile.get("award_status", AWARD_STATUS_ANY)).lower()
+        year_from = (
+            int(year_from_raw)
+            if year_from_raw not in (None, "")
+            else None
+        )
+        year_to = (
+            int(year_to_raw)
+            if year_to_raw not in (None, "")
+            else None
+        )
+        status = str(
+            profile.get("award_status", AWARD_STATUS_ANY)
+        ).lower()
+
+        source_options = await adapter.async_categories(media_type)
+        category_mode = str(
+            profile.get("award_category_mode", "source")
+        ).lower()
+
+        if category_mode == "generic":
+            generic_category = str(
+                profile.get("award_generic_category", "all")
+            )
+            categories = resolve_source_categories(
+                source,
+                generic_category,
+                source_options,
+            )
+            if not categories:
+                return []
+        else:
+            categories = [
+                str(profile.get("award_category", "all") or "all")
+            ]
 
         if preset == AWARD_PRESET_LATEST_WINNERS:
             year_from = latest_year
             year_to = latest_year
-            category = "all"
+            categories = ["all"]
             status = AWARD_STATUS_WINNER
         elif preset == AWARD_PRESET_LATEST_NOMINEES:
             year_from = latest_year
             year_to = latest_year
-            category = "all"
+            categories = ["all"]
             status = AWARD_STATUS_ANY
-        elif preset in {AWARD_PRESET_BEST_PICTURE_WINNERS, AWARD_PRESET_BEST_PICTURE_NOMINEES}:
-            categories = await adapter.async_categories(media_type)
-            best_values = [
-                x["value"] for x in categories
-                if any(token in x["label"].casefold() for token in ("best picture", "best film", "motion picture - drama"))
-            ]
-            if best_values:
-                category = best_values[0]
-            status = AWARD_STATUS_WINNER if preset == AWARD_PRESET_BEST_PICTURE_WINNERS else AWARD_STATUS_ANY
+        elif preset == AWARD_PRESET_BEST_PICTURE_WINNERS:
+            # Generic "top film" preset maps to the provider's actual label.
+            categories = resolve_source_categories(
+                source,
+                "best_film",
+                source_options,
+            ) or ["all"]
+            status = AWARD_STATUS_WINNER
+        elif preset == AWARD_PRESET_BEST_PICTURE_NOMINEES:
+            categories = resolve_source_categories(
+                source,
+                "best_film",
+                source_options,
+            ) or ["all"]
+            status = AWARD_STATUS_ANY
 
-        award_titles = await adapter.async_filter_titles(
-            media_type=media_type,
-            year_from=year_from,
-            year_to=year_to,
-            category=category,
-            status=status,
+        # A generic concept may map to more than one historical/source category.
+        # Query each category and collapse duplicate titles afterwards.
+        raw_titles: list[dict[str, Any]] = []
+        for category in categories:
+            raw_titles.extend(
+                await adapter.async_filter_titles(
+                    media_type=media_type,
+                    year_from=year_from,
+                    year_to=year_to,
+                    category=category,
+                    status=status,
+                )
+            )
+
+        # Merge repeated title records from multiple mapped categories.
+        merged: dict[str, dict[str, Any]] = {}
+        for item in raw_titles:
+            key = str(
+                item.get("tmdb_id")
+                or item.get("imdb_id")
+                or item.get("stable_key")
+                or f'{item.get("title","").casefold()}:{item.get("release_year","")}'
+            )
+            if key not in merged:
+                merged[key] = dict(item)
+                merged[key]["award_years"] = list(item.get("award_years", []))
+                merged[key]["categories"] = list(item.get("categories", []))
+                merged[key]["winning_categories"] = list(
+                    item.get("winning_categories", [])
+                )
+                continue
+
+            existing = merged[key]
+            existing["award_years"] = sorted(
+                set(existing.get("award_years", []))
+                | set(item.get("award_years", []))
+            )
+            existing["categories"] = sorted(
+                set(existing.get("categories", []))
+                | set(item.get("categories", []))
+            )
+            existing["winning_categories"] = sorted(
+                set(existing.get("winning_categories", []))
+                | set(item.get("winning_categories", []))
+            )
+            existing["nominations"] = max(
+                int(existing.get("nominations", 0)),
+                int(item.get("nominations", 0)),
+            )
+            existing["wins"] = max(
+                int(existing.get("wins", 0)),
+                int(item.get("wins", 0)),
+            )
+
+        award_titles = list(merged.values())[:resolution_limit]
+
+        resolved = await asyncio.gather(
+            *(
+                self._resolve_award_title(item, source, media_type)
+                for item in award_titles
+            )
         )
-        award_titles = award_titles[:resolution_limit]
-        resolved = await asyncio.gather(*(
-            self._resolve_award_title(item, media_type, award_source)
-            for item in award_titles
-        ))
         return [item for item in resolved if item is not None]
 
     async def _build_discovery_profiles(

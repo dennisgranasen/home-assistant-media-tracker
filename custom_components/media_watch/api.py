@@ -270,6 +270,32 @@ class TMDBApi:
         )
         return data.get("results", [])
 
+    async def get_movie_genres(
+        self,
+        language: str,
+    ) -> list[dict[str, Any]]:
+        """Return TMDB's movie genre catalogue in the requested language."""
+        data = await self._request(
+            "GET",
+            "/genre/movie/list",
+            params={"language": language},
+            include_session=False,
+        )
+        return data.get("genres", [])
+
+    async def get_tv_genres(
+        self,
+        language: str,
+    ) -> list[dict[str, Any]]:
+        """Return TMDB's TV genre catalogue in the requested language."""
+        data = await self._request(
+            "GET",
+            "/genre/tv/list",
+            params={"language": language},
+            include_session=False,
+        )
+        return data.get("genres", [])
+
     async def discover_movies(
         self,
         *,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from homeassistant.util import slugify
+
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -666,7 +668,7 @@ class OscarsFeedSensor(_MediaTrackerFeedSensor):
 
 
 class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
-    """Dynamic discovery queue configured in integration options."""
+    """One dedicated Home Assistant entity per discovery profile."""
 
     _attr_icon = "mdi:movie-search-outline"
 
@@ -679,17 +681,30 @@ class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
         super().__init__(coordinator, entry)
         self._profile = dict(profile)
         profile_id = str(profile["id"])
-        self._attr_name = str(profile["name"])
+        profile_name = str(profile["name"])
+
+        self._attr_name = profile_name
         self._attr_unique_id = (
             f"{entry.entry_id}_discovery_profile_{profile_id}"
         )
 
+        # Give HA a deterministic and card-friendly object-id suggestion while
+        # still letting the entity registry handle collisions/renames safely.
+        self._attr_suggested_object_id = (
+            f"media_watch_{slugify(profile_id)}"
+        )
+
+    @property
+    def _feed(self) -> dict[str, Any]:
+        profile_id = str(self._profile["id"])
+        return self.coordinator.data.get(
+            "discovery_profiles", {}
+        ).get(profile_id, {})
+
     @property
     def _items(self) -> list[dict[str, Any]]:
         profile_id = str(self._profile["id"])
-        feed = self.coordinator.data.get(
-            "discovery_profiles", {}
-        ).get(profile_id, {})
+        feed = self._feed
         media_type = str(
             feed.get(
                 "media_type",
@@ -704,12 +719,13 @@ class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
                 rendered = _tv_feed_item(item, "profile")
             else:
                 rendered = _movie_feed_item(item, "profile")
+
             rendered["profile"] = {
                 "id": profile_id,
                 "name": self._profile.get("name"),
                 "source": self._profile.get("source", "discover"),
-                "award_filter": self._profile.get(
-                    "award_filter", "none"
+                "award_source": self._profile.get(
+                    "award_source", "none"
                 ),
             }
             if item.get("award"):
@@ -720,8 +736,22 @@ class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        feed = self._feed
         return {
             "items": self._items,
+            "profile_id": self._profile.get("id"),
+            "profile_name": self._profile.get("name"),
+            "media_type": feed.get(
+                "media_type",
+                self._profile.get("media_type", "movie"),
+            ),
+            "source": feed.get(
+                "source",
+                self._profile.get("source", "discover"),
+            ),
+            "award_source": self._profile.get(
+                "award_source", "none"
+            ),
             "profile": dict(self._profile),
         }
 

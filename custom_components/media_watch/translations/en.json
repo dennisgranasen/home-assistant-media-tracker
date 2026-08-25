@@ -76,13 +76,15 @@
       },
       "profile_award_details": {
         "title": "Award filters",
-        "description": "Categories are loaded from the selected award source, so invalid category/source combinations cannot be selected.",
+        "description": "Choose a generic category for an easier cross-award setup, or use the award-specific dropdown. Both lists are generated from the selected award adapter; invalid free-text categories are not used.",
         "data": {
           "award_preset": "Quick list",
-          "award_category": "Category",
+          "award_category": "Award-specific category",
           "award_status": "Status",
           "award_year_from": "Award year from",
-          "award_year_to": "Award year to"
+          "award_year_to": "Award year to",
+          "award_category_mode": "Category mode",
+          "award_generic_category": "Generic category"
         }
       },
       "profile_filters": {
@@ -91,15 +93,16 @@
           "provider_scope": "Providers",
           "min_rating": "Minimum rating",
           "min_votes": "Minimum votes",
-          "include_genres": "Include genre IDs",
-          "exclude_genres": "Exclude genre IDs",
+          "include_genres": "Include genres",
+          "exclude_genres": "Exclude genres",
           "genre_match": "Genre matching",
           "release_date_gte": "Released on/after",
           "release_date_lte": "Released on/before",
           "sort_by": "Sort",
           "max_pages": "TMDB pages",
           "limit": "Feed size"
-        }
+        },
+        "description": "Genres are loaded from TMDB for the selected media type and stored internally by stable genre ID."
       }
     },
     "error": {
