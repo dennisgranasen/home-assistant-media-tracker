@@ -410,6 +410,97 @@ class MovieWatchlistFeedSensor(_MediaTrackerFeedSensor):
         }
 
 
+def _movie_feed_item(
+    item: dict[str, Any],
+    source: str,
+) -> dict[str, Any]:
+    """Render an enriched movie for a generic profile feed."""
+    providers = (
+        item.get("my_providers")
+        or item.get("providers")
+        or []
+    )
+    return {
+        "media_type": "movie",
+        "source": source,
+        "tmdb_id": item.get("id"),
+        "title": item.get("title"),
+        "original_title": item.get("original_title"),
+        "release_date": item.get("release_date"),
+        "vote_average": item.get("vote_average"),
+        "vote_count": item.get("vote_count"),
+        "overview": item.get("overview") or "",
+        "poster": (
+            f"https://image.tmdb.org/t/p/w500{item['poster_path']}"
+            if item.get("poster_path")
+            else None
+        ),
+        "genre_ids": item.get("genre_ids", []),
+        "genres": item.get("genres", []),
+        "providers": providers,
+        "provider": ", ".join(providers),
+        "provider_details": (
+            item.get("my_provider_details")
+            or item.get("provider_details")
+            or []
+        ),
+        "available_on_my_services": item.get(
+            "available_on_my_services", False
+        ),
+        "recommendation": item.get("recommendation"),
+        "award": item.get("award"),
+        "deep_link": (
+            "https://www.themoviedb.org/movie/"
+            f"{item.get('id')}"
+        ),
+    }
+
+
+def _tv_feed_item(
+    item: dict[str, Any],
+    source: str,
+) -> dict[str, Any]:
+    """Render an enriched TV show for a generic profile feed."""
+    providers = (
+        item.get("my_providers")
+        or item.get("providers")
+        or []
+    )
+    return {
+        "media_type": "tv",
+        "source": source,
+        "tmdb_id": item.get("id"),
+        "title": item.get("name"),
+        "original_title": item.get("original_name"),
+        "release_date": item.get("first_air_date"),
+        "vote_average": item.get("vote_average"),
+        "vote_count": item.get("vote_count"),
+        "overview": item.get("overview") or "",
+        "poster": (
+            f"https://image.tmdb.org/t/p/w500{item['poster_path']}"
+            if item.get("poster_path")
+            else None
+        ),
+        "genre_ids": item.get("genre_ids", []),
+        "genres": item.get("genres", []),
+        "providers": providers,
+        "provider": ", ".join(providers),
+        "provider_details": (
+            item.get("my_provider_details")
+            or item.get("provider_details")
+            or []
+        ),
+        "available_on_my_services": item.get(
+            "available_on_my_services", False
+        ),
+        "recommendation": item.get("recommendation"),
+        "deep_link": (
+            "https://www.themoviedb.org/tv/"
+            f"{item.get('id')}"
+        ),
+    }
+
+
 class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
     """One dedicated Home Assistant entity per discovery profile."""
 
@@ -685,4 +776,3 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
             "watchlist_movies": self._watchlist_movies,
             "discovery_movies": self._discovery_movies,
         }
-

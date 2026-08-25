@@ -67,6 +67,29 @@ def test_coordinator_private_calls_and_keywords_resolve() -> None:
     assert invalid_keywords == []
 
 
+def test_sensor_private_module_calls_resolve() -> None:
+    path = ROOT / "custom_components/media_watch/sensor.py"
+    tree = ast.parse(
+        path.read_text(encoding="utf-8"),
+        filename=str(path),
+    )
+    functions = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    missing = [
+        (call.lineno, call.func.id)
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id.startswith("_")
+        and call.func.id not in functions
+    ]
+
+    assert missing == []
+
+
 def test_all_registered_award_adapters_implement_interface() -> None:
     adapter_dir = ROOT / "custom_components/media_watch/award_adapters"
     classes: dict[str, ast.ClassDef] = {}
