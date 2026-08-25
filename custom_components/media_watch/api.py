@@ -8,6 +8,8 @@ from typing import Any
 from aiohttp import ClientError, ClientResponseError, ClientSession
 
 BASE_URL = "https://api.themoviedb.org/3"
+MAX_CONCURRENT_REQUESTS = 4
+MAX_RATE_LIMIT_RETRIES = 3
 
 
 class TMDBError(Exception):
@@ -30,6 +32,9 @@ class TMDBApi:
         self._session = session
         self._access_token = access_token
         self._session_id = session_id
+        self._request_semaphore = asyncio.Semaphore(
+            MAX_CONCURRENT_REQUESTS
+        )
 
     @property
     def headers(self) -> dict[str, str]:
@@ -52,27 +57,57 @@ class TMDBApi:
         if include_session and self._session_id:
             request_params.setdefault("session_id", self._session_id)
 
-        try:
-            async with asyncio.timeout(20):
-                response = await self._session.request(
-                    method,
-                    f"{BASE_URL}{path}",
-                    headers=self.headers,
-                    params=request_params,
-                    json=json,
-                )
-                response.raise_for_status()
-                if response.content_type == "application/json":
-                    return await response.json()
-                return {}
-        except ClientResponseError as err:
-            if err.status in (401, 403):
-                raise TMDBAuthError(
-                    f"TMDB authentication failed ({err.status})"
+        for attempt in range(MAX_RATE_LIMIT_RETRIES + 1):
+            retry_delay: float | None = None
+            try:
+                async with asyncio.timeout(20):
+                    async with self._request_semaphore:
+                        async with self._session.request(
+                            method,
+                            f"{BASE_URL}{path}",
+                            headers=self.headers,
+                            params=request_params,
+                            json=json,
+                        ) as response:
+                            if response.status == 429:
+                                if attempt >= MAX_RATE_LIMIT_RETRIES:
+                                    raise TMDBError(
+                                        "TMDB rate limit exceeded after "
+                                        f"{MAX_RATE_LIMIT_RETRIES} retries"
+                                    )
+                                retry_after = response.headers.get(
+                                    "Retry-After"
+                                )
+                                try:
+                                    retry_delay = float(retry_after)
+                                except (TypeError, ValueError):
+                                    retry_delay = float(2**attempt)
+                                retry_delay = max(
+                                    0.1, min(retry_delay, 30.0)
+                                )
+                            else:
+                                response.raise_for_status()
+                                if (
+                                    response.content_type
+                                    == "application/json"
+                                ):
+                                    return await response.json()
+                                return {}
+            except ClientResponseError as err:
+                if err.status in (401, 403):
+                    raise TMDBAuthError(
+                        f"TMDB authentication failed ({err.status})"
+                    ) from err
+                raise TMDBError(
+                    f"TMDB HTTP error {err.status}"
                 ) from err
-            raise TMDBError(f"TMDB HTTP error {err.status}") from err
-        except (ClientError, TimeoutError) as err:
-            raise TMDBError(f"TMDB request failed: {err}") from err
+            except (ClientError, TimeoutError) as err:
+                raise TMDBError(f"TMDB request failed: {err}") from err
+
+            if retry_delay is not None:
+                await asyncio.sleep(retry_delay)
+
+        raise TMDBError("TMDB request failed after retries")
 
     async def validate_token(self) -> None:
         await self._request("GET", "/configuration", include_session=False)

@@ -8,6 +8,8 @@ from types import MethodType, SimpleNamespace
 import pytest
 
 from custom_components.media_watch import coordinator as coordinator_module
+from custom_components.media_watch import api as api_module
+from custom_components.media_watch.api import TMDBApi
 from custom_components.media_watch.const import (
     PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
 )
@@ -168,12 +170,14 @@ def test_award_status_is_applied_after_category_merge(
     excluded = asyncio.run(
         coordinator._award_profile_candidates(
             {**base_profile, "award_status": "nominated_no_win"},
+            target_limit=1,
             resolution_batch_size=1,
         )
     )
     included = asyncio.run(
         coordinator._award_profile_candidates(
             {**base_profile, "award_status": "nominated_and_won"},
+            target_limit=1,
             resolution_batch_size=1,
         )
     )
@@ -183,7 +187,7 @@ def test_award_status_is_applied_after_category_merge(
     assert included[0]["award"]["wins"] == 1
 
 
-def test_award_resolution_batch_size_does_not_truncate_candidates(
+def test_award_resolution_continues_until_filters_have_enough_candidates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Adapter:
@@ -213,9 +217,14 @@ def test_award_resolution_batch_size_does_not_truncate_candidates(
         coordinator_module, "create_adapter", lambda _hass, _source: Adapter()
     )
 
+    resolved_ids: list[int] = []
+
     async def resolve(self, item, **_kwargs):
+        tmdb_id = int(item["title"].split()[-1])
+        resolved_ids.append(tmdb_id)
         return {
-            "id": int(item["title"].split()[-1]),
+            "id": tmdb_id,
+            "available_on_my_services": tmdb_id >= 2,
             "award": {
                 "award_years": item["award_years"],
                 "categories": item["categories"],
@@ -229,12 +238,23 @@ def test_award_resolution_batch_size_does_not_truncate_candidates(
 
     result = asyncio.run(
         coordinator._award_profile_candidates(
-            {"media_type": "movie", "award_source": "test"},
+            {
+                "media_type": "movie",
+                "award_source": "test",
+                "provider_scope": "my",
+            },
+            target_limit=1,
             resolution_batch_size=2,
         )
     )
 
-    assert [item["id"] for item in result] == [0, 1, 2, 3, 4]
+    filtered = coordinator._profile_post_filter(
+        result,
+        {"provider_scope": "my"},
+        "movie",
+    )
+    assert [item["id"] for item in filtered] == [2, 3]
+    assert resolved_ids == [0, 1, 2, 3]
 
 
 def test_title_cache_separates_award_year_hints() -> None:
@@ -273,3 +293,51 @@ def test_title_cache_separates_award_year_hints() -> None:
 
     assert first["id"] != second["id"]
     assert coordinator.api.calls == 2
+
+
+def test_tmdb_rate_limit_retries_after_server_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Response:
+        def __init__(self, status, payload=None, headers=None):
+            self.status = status
+            self._payload = payload or {}
+            self.headers = headers or {}
+            self.content_type = "application/json"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def json(self):
+            return self._payload
+
+    class Session:
+        def __init__(self):
+            self.responses = [
+                Response(429, headers={"Retry-After": "2"}),
+                Response(200, payload={"ok": True}),
+            ]
+
+        def request(self, *_args, **_kwargs):
+            return self.responses.pop(0)
+
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(api_module.asyncio, "sleep", sleep)
+    api = TMDBApi(Session(), "token")
+
+    result = asyncio.run(
+        api._request("GET", "/test", include_session=False)
+    )
+
+    assert result == {"ok": True}
+    assert delays == [2.0]

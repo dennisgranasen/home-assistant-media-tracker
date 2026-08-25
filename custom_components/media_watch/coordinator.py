@@ -1052,6 +1052,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self,
         profile: dict[str, Any],
         *,
+        target_limit: int,
         resolution_batch_size: int,
     ) -> list[dict[str, Any]]:
         """Build an award candidate set using any registered adapter."""
@@ -1205,15 +1206,15 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             item for item in merged.values() if status_matches(item)
         ]
 
-        # Resolve every award candidate before the profile post-filter. A
-        # fixed pre-filter cap loses valid historical matches when provider,
-        # genre, rating, or release-year filters reject early candidates.
-        # Batching bounds concurrent TMDB work without changing correctness.
-        resolved: list[dict[str, Any]] = []
+        # Resolve progressively until enough candidates survive the profile
+        # filters. Unlike the old fixed pre-filter cap, rejected early titles
+        # cause later historical candidates to be considered. Small batches
+        # avoid creating a TMDB request spike for broad award histories.
         batch_size = max(1, resolution_batch_size)
+        deduplicated: dict[int, dict[str, Any]] = {}
         for offset in range(0, len(award_titles), batch_size):
             batch = award_titles[offset : offset + batch_size]
-            resolved.extend(
+            resolved_batch = [
                 item
                 for item in await asyncio.gather(
                     *(
@@ -1226,37 +1227,44 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
                 )
                 if item is not None
-            )
+            ]
 
-        # Different source title spellings may still resolve to one TMDB ID.
-        # Keep a single queue item and preserve all category/year metadata.
-        deduplicated: dict[int, dict[str, Any]] = {}
-        for item in resolved:
-            tmdb_id = int(item["id"])
-            existing = deduplicated.get(tmdb_id)
-            if existing is None:
-                deduplicated[tmdb_id] = item
-                continue
+            # Different source title spellings may still resolve to one TMDB
+            # ID. Keep one queue item and preserve category/year metadata.
+            for item in resolved_batch:
+                tmdb_id = int(item["id"])
+                existing = deduplicated.get(tmdb_id)
+                if existing is None:
+                    deduplicated[tmdb_id] = item
+                    continue
 
-            existing_award = existing.get("award", {})
-            item_award = item.get("award", {})
-            for field in (
-                "award_years",
-                "categories",
-                "winning_categories",
-            ):
-                existing_award[field] = sorted(
-                    set(existing_award.get(field, []))
-                    | set(item_award.get(field, []))
+                existing_award = existing.get("award", {})
+                item_award = item.get("award", {})
+                for field in (
+                    "award_years",
+                    "categories",
+                    "winning_categories",
+                ):
+                    existing_award[field] = sorted(
+                        set(existing_award.get(field, []))
+                        | set(item_award.get(field, []))
+                    )
+                existing_award["nominations"] = max(
+                    int(existing_award.get("nominations", 0)),
+                    int(item_award.get("nominations", 0)),
                 )
-            existing_award["nominations"] = max(
-                int(existing_award.get("nominations", 0)),
-                int(item_award.get("nominations", 0)),
+                existing_award["wins"] = max(
+                    int(existing_award.get("wins", 0)),
+                    int(item_award.get("wins", 0)),
+                )
+
+            surviving = self._profile_post_filter(
+                list(deduplicated.values()),
+                profile,
+                media_type,
             )
-            existing_award["wins"] = max(
-                int(existing_award.get("wins", 0)),
-                int(item_award.get("wins", 0)),
-            )
+            if len(surviving) >= target_limit:
+                break
 
         return list(deduplicated.values())
 
@@ -1371,7 +1379,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if award_source != AWARD_SOURCE_NONE:
                 items = await self._award_profile_candidates(
                     profile,
-                    resolution_batch_size=max(limit * 4, 50),
+                    target_limit=limit,
+                    resolution_batch_size=4,
                 )
             elif (
                 award == PROFILE_AWARD_OSCARS_BEST_PICTURE_2026
