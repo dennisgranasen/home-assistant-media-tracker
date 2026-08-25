@@ -45,6 +45,17 @@ async def async_setup_entry(
         ]
     )
 
+    profiles = entry.options.get("discovery_profiles", [])
+    async_add_entities(
+        [
+            DiscoveryProfileFeedSensor(coordinator, entry, profile)
+            for profile in profiles
+            if isinstance(profile, dict)
+            and profile.get("id")
+            and profile.get("name")
+        ]
+    )
+
 
 class MediaWatchSensor(
     CoordinatorEntity[MediaWatchCoordinator], SensorEntity
@@ -497,6 +508,7 @@ def _movie_feed_item(item: dict[str, Any], source: str) -> dict[str, Any]:
             "available_on_my_services", False
         ),
         "recommendation": item.get("recommendation"),
+        "award": item.get("award"),
         "deep_link": (
             "https://www.themoviedb.org/movie/"
             f"{item.get('id')}"
@@ -649,6 +661,68 @@ class OscarsFeedSensor(_MediaTrackerFeedSensor):
                 "https://www.themoviedb.org/movie/"
                 f"{item.get('id')}"
             ),
+        }
+
+
+
+class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
+    """Dynamic discovery queue configured in integration options."""
+
+    _attr_icon = "mdi:movie-search-outline"
+
+    def __init__(
+        self,
+        coordinator,
+        entry,
+        profile: dict[str, Any],
+    ) -> None:
+        super().__init__(coordinator, entry)
+        self._profile = dict(profile)
+        profile_id = str(profile["id"])
+        self._attr_name = str(profile["name"])
+        self._attr_unique_id = (
+            f"{entry.entry_id}_discovery_profile_{profile_id}"
+        )
+
+    @property
+    def _items(self) -> list[dict[str, Any]]:
+        profile_id = str(self._profile["id"])
+        feed = self.coordinator.data.get(
+            "discovery_profiles", {}
+        ).get(profile_id, {})
+        media_type = str(
+            feed.get(
+                "media_type",
+                self._profile.get("media_type", "movie"),
+            )
+        )
+        raw_items = feed.get("items", [])
+
+        items: list[dict[str, Any]] = []
+        for item in raw_items:
+            if media_type == "tv":
+                rendered = _tv_feed_item(item, "profile")
+            else:
+                rendered = _movie_feed_item(item, "profile")
+            rendered["profile"] = {
+                "id": profile_id,
+                "name": self._profile.get("name"),
+                "source": self._profile.get("source", "discover"),
+                "award_filter": self._profile.get(
+                    "award_filter", "none"
+                ),
+            }
+            if item.get("award"):
+                rendered["award"] = item.get("award")
+            items.append(rendered)
+
+        return items
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "items": self._items,
+            "profile": dict(self._profile),
         }
 
 

@@ -1,0 +1,1 @@
+"""Award adapter implementations."""

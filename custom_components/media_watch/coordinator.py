@@ -14,6 +14,8 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
+from .awards import OscarsRepository
+from .award_registry import create_adapter
 from .api import TMDBApi, TMDBError
 from .const import (
     CONF_ACCOUNT_ID,
@@ -40,6 +42,7 @@ from .const import (
     CONF_DISCOVERY_EXCLUDE_GENRES,
     CONF_DISCOVERY_GENRE_MATCH,
     CONF_DISCOVERY_PROVIDER_SCOPE,
+    CONF_DISCOVERY_PROFILES,
     DEFAULT_DISCOVERY_MAX_PAGES,
     DEFAULT_DISCOVERY_INCLUDE_GENRES,
     DEFAULT_DISCOVERY_EXCLUDE_GENRES,
@@ -47,6 +50,21 @@ from .const import (
     DEFAULT_DISCOVERY_PROVIDER_SCOPE,
     UPDATE_INTERVAL,
     OSCAR_BEST_PICTURE_2026,
+    PROFILE_SOURCE_DISCOVER,
+    PROFILE_SOURCE_PERSONALIZED,
+    PROFILE_AWARD_NONE,
+    PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
+    AWARD_SOURCE_NONE,
+    AWARD_SOURCE_OSCARS,
+    AWARD_STATUS_ANY,
+    AWARD_STATUS_WINNER,
+    AWARD_STATUS_NOMINATED_NO_WIN,
+    AWARD_STATUS_NOMINATED_AND_WON,
+    AWARD_PRESET_NONE,
+    AWARD_PRESET_LATEST_WINNERS,
+    AWARD_PRESET_LATEST_NOMINEES,
+    AWARD_PRESET_BEST_PICTURE_WINNERS,
+    AWARD_PRESET_BEST_PICTURE_NOMINEES,
 )
 from .store import MediaWatchStore
 
@@ -77,6 +95,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.store = store
         self._profile_language: str | None = None
         self._profile_region: str | None = None
+        self._oscars = OscarsRepository(hass)
+        self._award_tmdb_cache: dict[str, dict[str, Any] | None] = {}
 
     def _option(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
@@ -801,6 +821,422 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 result.append(genre_id)
         return result
 
+
+    @property
+    def discovery_profiles(self) -> list[dict[str, Any]]:
+        """Return configured dynamic discovery profiles."""
+        value = self.entry.options.get(CONF_DISCOVERY_PROFILES, [])
+        if not isinstance(value, list):
+            return []
+        return [
+            dict(profile)
+            for profile in value
+            if isinstance(profile, dict)
+            and profile.get("id")
+            and profile.get("name")
+        ]
+
+    @staticmethod
+    def _profile_date(item: dict[str, Any], media_type: str) -> str:
+        if media_type == "tv":
+            return str(item.get("first_air_date") or "")
+        return str(item.get("release_date") or "")
+
+    def _profile_post_filter(
+        self,
+        items: list[dict[str, Any]],
+        profile: dict[str, Any],
+        media_type: str,
+    ) -> list[dict[str, Any]]:
+        """Apply filters needed after enrichment/recommendation/award lookup."""
+        include = set(self._parse_genre_ids(profile.get("include_genres", "")))
+        exclude = set(self._parse_genre_ids(profile.get("exclude_genres", "")))
+        match = str(profile.get("genre_match", "any")).lower()
+        provider_scope = str(profile.get("provider_scope", "all")).lower()
+        min_rating = float(profile.get("min_rating", 0) or 0)
+        min_votes = int(profile.get("min_votes", 0) or 0)
+        date_gte = str(profile.get("release_date_gte") or "").strip()
+        date_lte = str(profile.get("release_date_lte") or "").strip()
+
+        result: list[dict[str, Any]] = []
+        for item in items:
+            if self.store.is_watched(media_type, int(item["id"])):
+                continue
+            if self.store.is_dismissed(media_type, int(item["id"])):
+                continue
+            if provider_scope == "my" and not item.get(
+                "available_on_my_services", False
+            ):
+                continue
+            if float(item.get("vote_average") or 0) < min_rating:
+                continue
+            if int(item.get("vote_count") or 0) < min_votes:
+                continue
+
+            item_genres = {
+                int(value)
+                for value in item.get("genre_ids", [])
+                if value is not None
+            }
+            if exclude and item_genres.intersection(exclude):
+                continue
+            if include:
+                if match == "all":
+                    if not include.issubset(item_genres):
+                        continue
+                elif not item_genres.intersection(include):
+                    continue
+
+            item_date = self._profile_date(item, media_type)
+            if date_gte and (not item_date or item_date < date_gte):
+                continue
+            if date_lte and (not item_date or item_date > date_lte):
+                continue
+
+            result.append(item)
+
+        sort_by = str(profile.get("sort_by", "popularity.desc"))
+        reverse = sort_by.endswith(".desc")
+        sort_field = sort_by.rsplit(".", 1)[0]
+
+        def sort_value(item: dict[str, Any]) -> Any:
+            if sort_field in {"primary_release_date", "first_air_date"}:
+                return self._profile_date(item, media_type)
+            if sort_field == "vote_average":
+                return float(item.get("vote_average") or 0)
+            if sort_field == "vote_count":
+                return int(item.get("vote_count") or 0)
+            return float(item.get("popularity") or 0)
+
+        result.sort(key=sort_value, reverse=reverse)
+        return result
+
+
+    async def _resolve_award_title(
+        self,
+        award_item: dict[str, Any],
+        media_type: str,
+        award_source: str,
+    ) -> dict[str, Any] | None:
+        """Resolve a normalized award title to TMDB and enrich it."""
+        cache_key = f"{award_source}:{media_type}:{award_item.get('imdb_id') or award_item.get('tmdb_id') or award_item.get('title')}"
+        if cache_key in self._award_tmdb_cache:
+            cached = self._award_tmdb_cache[cache_key]
+            if cached is None:
+                return None
+            item = dict(cached)
+        else:
+            candidate = None
+            tmdb_id = award_item.get("tmdb_id")
+            imdb_id = str(award_item.get("imdb_id") or "")
+            if tmdb_id:
+                if media_type == "movie":
+                    candidate = {"id": int(tmdb_id)}
+                else:
+                    candidate = {"id": int(tmdb_id)}
+            elif imdb_id.startswith("tt"):
+                found = await self.api.find_by_imdb_id(imdb_id, self.language)
+                key = "movie_results" if media_type == "movie" else "tv_results"
+                results = found.get(key) or []
+                if results:
+                    candidate = results[0]
+            else:
+                titles = list(award_item.get("title_candidates") or [])
+                if award_item.get("title"):
+                    titles.append(str(award_item["title"]))
+                seen = set()
+                titles = [x for x in titles if x and not (x.casefold() in seen or seen.add(x.casefold()))]
+                award_years = award_item.get("award_years") or []
+                target_year = max(award_years) if award_years else None
+                for title in reversed(titles):
+                    results = (
+                        await self.api.search_movies(title, self.language)
+                        if media_type == "movie"
+                        else await self.api.search_tv(title, self.language)
+                    )
+                    if not results and self.fallback_language:
+                        results = (
+                            await self.api.search_movies(title, self.fallback_language)
+                            if media_type == "movie"
+                            else await self.api.search_tv(title, self.fallback_language)
+                        )
+                    if not results:
+                        continue
+                    def score(result: dict[str, Any]) -> tuple[int, float]:
+                        date = str(result.get("release_date") or result.get("first_air_date") or "")
+                        try:
+                            year = int(date[:4])
+                        except ValueError:
+                            year = 0
+                        year_score = 0 if target_year is None or year == 0 else max(0, 5 - abs(year - target_year))
+                        return (year_score, float(result.get("popularity") or 0))
+                    candidate = max(results[:10], key=score)
+                    break
+            if candidate is None:
+                self._award_tmdb_cache[cache_key] = None
+                return None
+            item = (
+                await self._enrich_movie(candidate)
+                if media_type == "movie"
+                else await self._enrich_tv_discovery(candidate)
+            )
+            self._award_tmdb_cache[cache_key] = dict(item)
+
+        item["award"] = {
+            "organization": award_item.get("organization") or award_source,
+            "source": award_source,
+            "award_years": award_item.get("award_years", []),
+            "nominations": award_item.get("nominations", 0),
+            "wins": award_item.get("wins", 0),
+            "categories": award_item.get("categories", []),
+            "winning_categories": award_item.get("winning_categories", []),
+        }
+        return item
+
+    async def _award_profile_candidates(
+        self,
+        profile: dict[str, Any],
+        *,
+        media_type: str,
+        award_source: str,
+        resolution_limit: int,
+    ) -> list[dict[str, Any]]:
+        """Build candidate titles through any registered award adapter."""
+        adapter = create_adapter(self.hass, award_source)
+        if adapter is None or media_type not in adapter.info.media_types:
+            return []
+
+        preset = str(profile.get("award_preset", AWARD_PRESET_NONE)).lower()
+        latest_year = await adapter.async_latest_award_year(media_type)
+        year_from_raw = profile.get("award_year_from")
+        year_to_raw = profile.get("award_year_to")
+        year_from = int(year_from_raw) if year_from_raw not in (None, "") else None
+        year_to = int(year_to_raw) if year_to_raw not in (None, "") else None
+        category = str(profile.get("award_category", "all") or "all")
+        status = str(profile.get("award_status", AWARD_STATUS_ANY)).lower()
+
+        if preset == AWARD_PRESET_LATEST_WINNERS:
+            year_from = latest_year
+            year_to = latest_year
+            category = "all"
+            status = AWARD_STATUS_WINNER
+        elif preset == AWARD_PRESET_LATEST_NOMINEES:
+            year_from = latest_year
+            year_to = latest_year
+            category = "all"
+            status = AWARD_STATUS_ANY
+        elif preset in {AWARD_PRESET_BEST_PICTURE_WINNERS, AWARD_PRESET_BEST_PICTURE_NOMINEES}:
+            categories = await adapter.async_categories(media_type)
+            best_values = [
+                x["value"] for x in categories
+                if any(token in x["label"].casefold() for token in ("best picture", "best film", "motion picture - drama"))
+            ]
+            if best_values:
+                category = best_values[0]
+            status = AWARD_STATUS_WINNER if preset == AWARD_PRESET_BEST_PICTURE_WINNERS else AWARD_STATUS_ANY
+
+        award_titles = await adapter.async_filter_titles(
+            media_type=media_type,
+            year_from=year_from,
+            year_to=year_to,
+            category=category,
+            status=status,
+        )
+        award_titles = award_titles[:resolution_limit]
+        resolved = await asyncio.gather(*(
+            self._resolve_award_title(item, media_type, award_source)
+            for item in award_titles
+        ))
+        return [item for item in resolved if item is not None]
+
+    async def _build_discovery_profiles(
+        self,
+        *,
+        selected_ids: list[int],
+        movie_provider_ids: list[int],
+        tv_provider_ids: list[int],
+        watchlist_ids: set[int],
+        watchlist_tv_ids: set[int],
+        personalized_movies: list[dict[str, Any]],
+        personalized_tv: list[dict[str, Any]],
+        oscar_movies: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """Build all configured discovery queues."""
+        output: dict[str, dict[str, Any]] = {}
+
+        for profile in self.discovery_profiles:
+            profile_id = str(profile["id"])
+            name = str(profile["name"])
+            media_type = str(profile.get("media_type", "movie")).lower()
+            if media_type not in {"movie", "tv"}:
+                media_type = "movie"
+
+            source = str(
+                profile.get("source", PROFILE_SOURCE_DISCOVER)
+            ).lower()
+            award = str(
+                profile.get("award_filter", PROFILE_AWARD_NONE)
+            ).lower()
+            provider_scope = str(
+                profile.get("provider_scope", "all")
+            ).lower()
+            provider_ids = (
+                selected_ids
+                if provider_scope == "my"
+                else (
+                    movie_provider_ids
+                    if media_type == "movie"
+                    else tv_provider_ids
+                )
+            )
+
+            limit = max(1, min(200, int(profile.get("limit", 30) or 30)))
+            max_pages = max(
+                1, min(20, int(profile.get("max_pages", 5) or 5))
+            )
+            min_rating = float(profile.get("min_rating", 0) or 0)
+            min_votes = int(profile.get("min_votes", 0) or 0)
+            include_genres = self._parse_genre_ids(
+                profile.get("include_genres", "")
+            )
+            exclude_genres = self._parse_genre_ids(
+                profile.get("exclude_genres", "")
+            )
+            genre_match = str(profile.get("genre_match", "any")).lower()
+            if genre_match not in {"any", "all"}:
+                genre_match = "any"
+
+            items: list[dict[str, Any]]
+
+            award_source = str(
+                profile.get("award_source", AWARD_SOURCE_NONE)
+            ).lower()
+
+            # Historical award membership becomes the candidate set before
+            # genre/rating/provider/date post-filters are applied.
+            if award_source != AWARD_SOURCE_NONE:
+                items = await self._award_profile_candidates(
+                    profile,
+                    media_type=media_type,
+                    award_source=award_source,
+                    resolution_limit=max(limit * 4, 50),
+                )
+            elif (
+                award == PROFILE_AWARD_OSCARS_BEST_PICTURE_2026
+                and media_type == "movie"
+            ):
+                # Backward compatibility with v0.13 profiles.
+                items = [dict(item) for item in oscar_movies]
+            elif source == PROFILE_SOURCE_PERSONALIZED:
+                items = [
+                    dict(item)
+                    for item in (
+                        personalized_movies
+                        if media_type == "movie"
+                        else personalized_tv
+                    )
+                ]
+            else:
+                if media_type == "movie":
+                    raw = await self.api.discover_movies(
+                        region=self.region,
+                        language=self.language,
+                        provider_ids=provider_ids,
+                        min_rating=min_rating,
+                        min_votes=min_votes,
+                        include_genres=include_genres,
+                        exclude_genres=exclude_genres,
+                        genre_match=genre_match,
+                        release_date_gte=(
+                            str(profile.get("release_date_gte") or "").strip()
+                            or None
+                        ),
+                        release_date_lte=(
+                            str(profile.get("release_date_lte") or "").strip()
+                            or None
+                        ),
+                        sort_by=str(
+                            profile.get("sort_by", "popularity.desc")
+                        ),
+                        max_pages=max_pages,
+                    )
+                    exclude_ids = {
+                        *self.store.watched_movies,
+                        *watchlist_ids,
+                    }
+                    raw = [
+                        item
+                        for item in raw
+                        if int(item["id"]) not in exclude_ids
+                        and not self.store.is_dismissed(
+                            "movie", int(item["id"])
+                        )
+                    ][: max(limit * 2, limit)]
+                    items = list(
+                        await asyncio.gather(
+                            *(self._enrich_movie(item) for item in raw)
+                        )
+                    )
+                else:
+                    raw = await self.api.discover_tv(
+                        region=self.region,
+                        language=self.language,
+                        provider_ids=provider_ids,
+                        min_rating=min_rating,
+                        min_votes=min_votes,
+                        include_genres=include_genres,
+                        exclude_genres=exclude_genres,
+                        genre_match=genre_match,
+                        release_date_gte=(
+                            str(profile.get("release_date_gte") or "").strip()
+                            or None
+                        ),
+                        release_date_lte=(
+                            str(profile.get("release_date_lte") or "").strip()
+                            or None
+                        ),
+                        sort_by=str(
+                            profile.get("sort_by", "popularity.desc")
+                        ),
+                        max_pages=max_pages,
+                    )
+                    exclude_ids = {
+                        *self.store.watched_tv,
+                        *watchlist_tv_ids,
+                    }
+                    raw = [
+                        item
+                        for item in raw
+                        if int(item["id"]) not in exclude_ids
+                        and not self.store.is_dismissed(
+                            "tv", int(item["id"])
+                        )
+                    ][: max(limit * 2, limit)]
+                    items = list(
+                        await asyncio.gather(
+                            *(
+                                self._enrich_tv_discovery(item)
+                                for item in raw
+                            )
+                        )
+                    )
+
+            items = self._profile_post_filter(
+                items, profile, media_type
+            )[:limit]
+
+            output[profile_id] = {
+                "id": profile_id,
+                "name": name,
+                "media_type": media_type,
+                "source": source,
+                "award_filter": award,
+                "config": dict(profile),
+                "items": items,
+            }
+
+        return output
+
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             account_id = int(self.entry.data[CONF_ACCOUNT_ID])
@@ -1041,6 +1477,23 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     int(movie["id"]) in watchlist_ids
                 )
 
+            discovery_profiles = await self._build_discovery_profiles(
+                selected_ids=selected_ids,
+                movie_provider_ids=sorted(provider_catalog),
+                tv_provider_ids=sorted(
+                    {
+                        int(provider["provider_id"])
+                        for provider in tv_providers
+                        if provider.get("provider_id") is not None
+                    }
+                ),
+                watchlist_ids=watchlist_ids,
+                watchlist_tv_ids=watchlist_tv_ids,
+                personalized_movies=personalized_movies,
+                personalized_tv=personalized_tv,
+                oscar_movies=oscar_movies,
+            )
+
             global_next_episodes: list[dict[str, Any]] = []
 
             for show in tv_details:
@@ -1141,6 +1594,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "personalized_movies": personalized_movies,
                 "personalized_tv": personalized_tv,
                 "oscar_movies": oscar_movies,
+                "discovery_profiles": discovery_profiles,
                 "selected_providers": selected_providers,
                 "provider_ids": selected_ids,
                 "discovery_provider_ids": discovery_provider_ids,

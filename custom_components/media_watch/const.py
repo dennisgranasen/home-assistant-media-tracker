@@ -95,3 +95,38 @@ DEFAULT_DISCOVERY_INCLUDE_GENRES = ""
 DEFAULT_DISCOVERY_EXCLUDE_GENRES = ""
 DEFAULT_DISCOVERY_GENRE_MATCH = "any"
 DEFAULT_DISCOVERY_PROVIDER_SCOPE = "all"
+
+CONF_DISCOVERY_PROFILES = "discovery_profiles"
+
+PROFILE_SOURCE_DISCOVER = "discover"
+PROFILE_SOURCE_PERSONALIZED = "personalized"
+
+PROFILE_AWARD_NONE = "none"
+PROFILE_AWARD_OSCARS_BEST_PICTURE_2026 = "oscars_best_picture_2026"
+
+AWARD_SOURCE_NONE = "none"
+AWARD_SOURCE_OSCARS = "oscars"
+
+AWARD_STATUS_ANY = "any"
+AWARD_STATUS_WINNER = "winner"
+AWARD_STATUS_NOMINATED_NO_WIN = "nominated_no_win"
+AWARD_STATUS_NOMINATED_AND_WON = "nominated_and_won"
+
+AWARD_PRESET_NONE = "none"
+AWARD_PRESET_LATEST_WINNERS = "latest_winners"
+AWARD_PRESET_LATEST_NOMINEES = "latest_nominees"
+AWARD_PRESET_BEST_PICTURE_WINNERS = "best_picture_winners"
+AWARD_PRESET_BEST_PICTURE_NOMINEES = "best_picture_nominees"
+
+OSCARS_DATA_URL = (
+    "https://raw.githubusercontent.com/DLu/oscar_data/main/oscars.csv"
+)
+AWARD_SOURCE_GULDBAGGEN = "guldbaggen"
+AWARD_SOURCE_BAFTA_FILM = "bafta_film"
+AWARD_SOURCE_BAFTA_TV = "bafta_tv"
+AWARD_SOURCE_GOLDEN_GLOBES_FILM = "golden_globes_film"
+AWARD_SOURCE_GOLDEN_GLOBES_TV = "golden_globes_tv"
+AWARD_SOURCE_EMMYS = "emmys"
+AWARD_SOURCE_CANNES = "cannes"
+
+AWARD_SOURCE_HONG_KONG_FILM_AWARDS = "hong_kong_film_awards"

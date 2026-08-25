@@ -398,3 +398,134 @@ coordinator refresh is scheduled in the background.
 
 This is especially important now that a refresh can include movie/TV
 discovery, personalized recommendations, provider metadata and Oscars data.
+
+
+### v0.13.0 dynamic discovery profiles
+
+Discovery is no longer limited to one global queue. Add any number of named
+profiles under **Options → Discovery profiles**. Every profile becomes its own
+sensor and uses the common `items` feed contract.
+
+Profile filters include:
+
+- movie or TV
+- general discovery or personalized recommendations
+- awards filter (currently Oscars 2026 Best Picture)
+- all regional providers or only selected providers
+- minimum TMDB rating and vote count
+- include/exclude TMDB genre IDs with ANY/ALL matching
+- release date range
+- sort order
+- TMDB page depth and feed size
+
+Examples:
+
+- `Oscar Rom-Coms`: movie + Oscars + Comedy/Romance (ALL) + rating >= 5
+- `Modern Horror`: movie + Horror + released >= 2020-01-01
+- `Top Rated`: movie + rating >= 8.5 + rating sort
+
+Sensors use the profile name and a stable unique ID based on the profile ID.
+Changing options reloads the integration so newly added/removed profile
+entities are created/removed automatically.
+
+The older fixed discovery sensors remain for backwards compatibility.
+
+
+### v0.14.0 historical awards filters
+
+Dynamic discovery profiles can now use the full Academy Awards history rather
+than a single hard-coded ceremony.
+
+Oscar data is loaded from `DLu/oscar_data`, a curated dataset derived from the
+official Academy Awards Database and containing IMDb title IDs. Media Watch
+uses those IMDb IDs to resolve films through TMDB and then applies the normal
+language, provider, genre and rating enrichment.
+
+Award profile fields:
+
+- **Awards**: none / Academy Awards (Oscars)
+- **Awards quick list**:
+  - latest Oscars – all winners
+  - latest Oscars – all nominated films
+  - all Best Picture winners
+  - all Best Picture nominees
+  - custom
+- **Award category**: canonical Academy category, e.g. `BEST PICTURE`, or `all`
+- **Award status**:
+  - nominated or winner
+  - winner
+  - nominated, no win
+  - nominated + at least one win
+- **Award year from / to**
+
+Award results are collapsed to films before filtering. This enables queries
+such as:
+
+- every Oscar-nominated film from 2001 onward
+- every film from 1980–1994 that was nominated and won at least one Oscar
+- all Best Picture winners, further filtered by streaming provider
+- Oscar-nominated Romance+Comedy films with TMDB rating >= 5
+
+The Academy's "Award Year" convention is retained. For example, the 98th
+ceremony held in March 2026 is the Academy's 2025 award year.
+
+The historical source is downloaded once per Home Assistant process and then
+cached in memory; it is not re-downloaded on each coordinator refresh.
+
+
+### v0.14.1 award-aware profile UI
+
+Discovery profile configuration is now a multi-step flow:
+
+1. Name, media type and discovery source
+2. Award source
+3. Award-specific filters
+4. Ordinary discovery filters
+
+Award sources are filtered by media type before they are shown. Award
+categories are loaded from the selected provider itself, so users cannot
+accidentally choose an Oscar category for a TV-only award or a category that
+does not exist in the backing historical dataset.
+
+The implementation introduces an award-provider registry. Future Guldbaggen,
+BAFTA, Golden Globes and Emmy adapters can provide their own media-type
+capabilities and category lists without changing the discovery-profile UI.
+Only award providers with a working backend adapter are exposed to users.
+
+
+### v0.14.2 award adapter SDK
+
+Only the Oscars adapter is currently implemented.
+
+A formal `AwardAdapter` interface and registry are now included, together with
+`AWARD_ADAPTERS.md`, which documents how to add new award sources. Config flow
+continues to expose only registered, working adapters.
+
+### v0.15.0 award adapters
+
+Implemented and registered award adapters:
+
+- Academy Awards (Oscars) — movies
+- Guldbaggen — movies
+- BAFTA Film Awards — movies
+- BAFTA Television Awards — TV
+- Golden Globes — separate Film and Television adapters
+- Primetime Emmy Awards — TV
+- Festival de Cannes — movies; Official Selection/In Competition is normalized
+  as nomination/selection, festival prizes as wins
+
+All web-backed adapters use the award organizations' official archive pages and
+share an in-process HTTP cache. Award profile results are resolved to TMDB by
+IMDb ID where available, otherwise by candidate title and award-year proximity.
+
+Source web formats differ. The adapters intentionally isolate that parsing from
+the discovery engine so source-specific changes can be fixed without changing
+profile sensors or Lovelace cards.
+
+
+### v0.15.1 Hong Kong Film Awards
+
+Added a film award adapter for the Hong Kong Film Awards using the official
+HKFAA historical archive. It participates in the same dynamic award profile
+UI and can be combined with year ranges, categories, winner/nominee status,
+ratings, genres and provider filters.

@@ -10,6 +10,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import slugify
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
@@ -23,6 +24,7 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
 )
 
+from .award_registry import async_categories, providers_for_media_type
 from .api import TMDBApi, TMDBAuthError, TMDBError
 from .const import (
     CONF_ACCESS_TOKEN,
@@ -43,6 +45,22 @@ from .const import (
     CONF_DISCOVERY_EXCLUDE_GENRES,
     CONF_DISCOVERY_GENRE_MATCH,
     CONF_DISCOVERY_PROVIDER_SCOPE,
+    CONF_DISCOVERY_PROFILES,
+    PROFILE_SOURCE_DISCOVER,
+    PROFILE_SOURCE_PERSONALIZED,
+    PROFILE_AWARD_NONE,
+    PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
+    AWARD_SOURCE_NONE,
+    AWARD_SOURCE_OSCARS,
+    AWARD_STATUS_ANY,
+    AWARD_STATUS_WINNER,
+    AWARD_STATUS_NOMINATED_NO_WIN,
+    AWARD_STATUS_NOMINATED_AND_WON,
+    AWARD_PRESET_NONE,
+    AWARD_PRESET_LATEST_WINNERS,
+    AWARD_PRESET_LATEST_NOMINEES,
+    AWARD_PRESET_BEST_PICTURE_WINNERS,
+    AWARD_PRESET_BEST_PICTURE_NOMINEES,
     DEFAULT_DISCOVERY_MAX_PAGES,
     DEFAULT_DISCOVERY_INCLUDE_GENRES,
     DEFAULT_DISCOVERY_EXCLUDE_GENRES,
@@ -216,7 +234,19 @@ class MediaWatchConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class MediaWatchOptionsFlow(config_entries.OptionsFlow):
     """Handle Media Watch options."""
 
+    def __init__(self) -> None:
+        self._editing_profile_id: str | None = None
+        self._profile_draft: dict[str, Any] = {}
+
     async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        return self.async_show_menu(
+            step_id="init",
+            menu_options=["general", "discovery_profiles"],
+        )
+
+    async def async_step_general(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         options = self.config_entry.options
@@ -263,7 +293,9 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                 int(item)
                 for item in cleaned.get(CONF_PROVIDERS, [])
             ]
-            return self.async_create_entry(data=cleaned)
+            merged = dict(self.config_entry.options)
+            merged.update(cleaned)
+            return self.async_create_entry(data=merged)
 
         current_provider_ids = [
             str(item)
@@ -426,3 +458,555 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
             data_schema=schema,
             errors=errors,
         )
+
+
+    def _profiles(self) -> list[dict[str, Any]]:
+        value = self.config_entry.options.get(
+            CONF_DISCOVERY_PROFILES, []
+        )
+        return [
+            dict(profile)
+            for profile in value
+            if isinstance(profile, dict)
+        ]
+
+    async def async_step_discovery_profiles(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        profiles = self._profiles()
+
+        action_options = [
+            SelectOptionDict(value="add", label="Add profile"),
+        ]
+        for profile in profiles:
+            profile_id = str(profile.get("id", ""))
+            name = str(profile.get("name", profile_id))
+            action_options.append(
+                SelectOptionDict(
+                    value=f"edit:{profile_id}",
+                    label=f"Edit: {name}",
+                )
+            )
+            action_options.append(
+                SelectOptionDict(
+                    value=f"delete:{profile_id}",
+                    label=f"Delete: {name}",
+                )
+            )
+
+        if user_input is not None:
+            action = str(user_input["profile_action"])
+            if action == "add":
+                self._editing_profile_id = None
+                return await self.async_step_profile()
+
+            operation, profile_id = action.split(":", 1)
+            if operation == "delete":
+                remaining = [
+                    item
+                    for item in profiles
+                    if str(item.get("id")) != profile_id
+                ]
+                merged = dict(self.config_entry.options)
+                merged[CONF_DISCOVERY_PROFILES] = remaining
+                return self.async_create_entry(data=merged)
+
+            self._editing_profile_id = profile_id
+            return await self.async_step_profile()
+
+        return self.async_show_form(
+            step_id="discovery_profiles",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("profile_action"): SelectSelector(
+                        SelectSelectorConfig(
+                            options=action_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
+        )
+
+    async def async_step_profile(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Choose the profile fundamentals first.
+
+        Media type is deliberately selected before award source so subsequent
+        steps can expose only valid award providers and categories.
+        """
+        profiles = self._profiles()
+        current = next(
+            (
+                item
+                for item in profiles
+                if str(item.get("id")) == self._editing_profile_id
+            ),
+            {},
+        )
+
+        if not self._profile_draft:
+            self._profile_draft = dict(current)
+
+        if user_input is not None:
+            self._profile_draft.update(user_input)
+            return await self.async_step_profile_awards()
+
+        def d(key: str, fallback: Any) -> Any:
+            return self._profile_draft.get(key, fallback)
+
+        return self.async_show_form(
+            step_id="profile",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "name",
+                        default=d("name", "New discovery"),
+                    ): TextSelector(TextSelectorConfig()),
+                    vol.Required(
+                        "media_type",
+                        default=d("media_type", "movie"),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                {"value": "movie", "label": "Movies"},
+                                {"value": "tv", "label": "TV shows"},
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        "source",
+                        default=d(
+                            "source", PROFILE_SOURCE_DISCOVER
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                {
+                                    "value": PROFILE_SOURCE_DISCOVER,
+                                    "label": "General discovery",
+                                },
+                                {
+                                    "value": PROFILE_SOURCE_PERSONALIZED,
+                                    "label": "Personalized",
+                                },
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_profile_awards(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Choose a valid award source for the already-selected media type."""
+        media_type = str(
+            self._profile_draft.get("media_type", "movie")
+        )
+
+        provider_options = [
+            {"value": AWARD_SOURCE_NONE, "label": "No awards filter"}
+        ]
+        provider_options.extend(
+            {
+                "value": info.source,
+                "label": info.label,
+            }
+            for info in providers_for_media_type(media_type)
+        )
+
+        if user_input is not None:
+            self._profile_draft.update(user_input)
+
+            if (
+                self._profile_draft.get("award_source")
+                == AWARD_SOURCE_NONE
+            ):
+                # Clear stale award fields if editing an existing profile.
+                self._profile_draft.update(
+                    {
+                        "award_preset": AWARD_PRESET_NONE,
+                        "award_category": "all",
+                        "award_status": AWARD_STATUS_ANY,
+                        "award_year_from": "",
+                        "award_year_to": "",
+                    }
+                )
+                return await self.async_step_profile_filters()
+
+            return await self.async_step_profile_award_details()
+
+        current_source = str(
+            self._profile_draft.get(
+                "award_source", AWARD_SOURCE_NONE
+            )
+        )
+        valid_sources = {
+            option["value"] for option in provider_options
+        }
+        if current_source not in valid_sources:
+            current_source = AWARD_SOURCE_NONE
+
+        return self.async_show_form(
+            step_id="profile_awards",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "award_source",
+                        default=current_source,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=provider_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
+        )
+
+    async def async_step_profile_award_details(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Show only categories valid for the selected award source."""
+        media_type = str(
+            self._profile_draft.get("media_type", "movie")
+        )
+        award_source = str(
+            self._profile_draft.get(
+                "award_source", AWARD_SOURCE_NONE
+            )
+        )
+
+        category_options = await async_categories(
+            self.hass,
+            award_source,
+            media_type,
+        )
+
+        # A configured category may have disappeared/been renamed in the
+        # backing source. Do not allow a now-invalid value back into the flow.
+        category_values = {
+            option["value"] for option in category_options
+        }
+        current_category = str(
+            self._profile_draft.get("award_category", "all")
+        )
+        if current_category not in category_values:
+            current_category = "all"
+
+        if user_input is not None:
+            self._profile_draft.update(user_input)
+            return await self.async_step_profile_filters()
+
+        return self.async_show_form(
+            step_id="profile_award_details",
+            description_placeholders={
+                "source": award_source,
+            },
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "award_preset",
+                        default=self._profile_draft.get(
+                            "award_preset",
+                            AWARD_PRESET_NONE,
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=(
+                                [
+                                    {"value": AWARD_PRESET_NONE, "label": "Custom"},
+                                    {"value": AWARD_PRESET_LATEST_WINNERS, "label": "Latest awards – all winners"},
+                                    {"value": AWARD_PRESET_LATEST_NOMINEES, "label": "Latest awards – all nominated/selected titles"},
+                                ]
+                                + ([
+                                    {"value": AWARD_PRESET_BEST_PICTURE_WINNERS, "label": "All top-film-category winners"},
+                                    {"value": AWARD_PRESET_BEST_PICTURE_NOMINEES, "label": "All top-film-category nominees"},
+                                ] if media_type == "movie" else [])
+                            ),
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        "award_category",
+                        default=current_category,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=category_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        "award_status",
+                        default=self._profile_draft.get(
+                            "award_status",
+                            AWARD_STATUS_ANY,
+                        ),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                {
+                                    "value": AWARD_STATUS_ANY,
+                                    "label": "Nominated or winner",
+                                },
+                                {
+                                    "value": AWARD_STATUS_WINNER,
+                                    "label": "Winner",
+                                },
+                                {
+                                    "value": AWARD_STATUS_NOMINATED_NO_WIN,
+                                    "label": "Nominated, no win",
+                                },
+                                {
+                                    "value": AWARD_STATUS_NOMINATED_AND_WON,
+                                    "label": "Nominated + at least one win",
+                                },
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(
+                        "award_year_from",
+                        default=self._profile_draft.get(
+                            "award_year_from", ""
+                        ),
+                    ): TextSelector(TextSelectorConfig()),
+                    vol.Optional(
+                        "award_year_to",
+                        default=self._profile_draft.get(
+                            "award_year_to", ""
+                        ),
+                    ): TextSelector(TextSelectorConfig()),
+                }
+            ),
+        )
+
+    async def async_step_profile_filters(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Configure ordinary discovery filters after award constraints."""
+        if user_input is not None:
+            self._profile_draft.update(user_input)
+            return self._save_profile()
+
+        d = lambda key, fallback: self._profile_draft.get(
+            key, fallback
+        )
+
+        media_type = str(d("media_type", "movie"))
+        sort_options = [
+            {
+                "value": "popularity.desc",
+                "label": "Popularity ↓",
+            },
+            {
+                "value": "vote_average.desc",
+                "label": "Rating ↓",
+            },
+            {
+                "value": "vote_count.desc",
+                "label": "Votes ↓",
+            },
+        ]
+        if media_type == "movie":
+            sort_options.extend(
+                [
+                    {
+                        "value": "primary_release_date.desc",
+                        "label": "Newest first",
+                    },
+                    {
+                        "value": "primary_release_date.asc",
+                        "label": "Oldest first",
+                    },
+                ]
+            )
+        else:
+            sort_options.extend(
+                [
+                    {
+                        "value": "first_air_date.desc",
+                        "label": "Newest first",
+                    },
+                    {
+                        "value": "first_air_date.asc",
+                        "label": "Oldest first",
+                    },
+                ]
+            )
+
+        current_sort = str(d("sort_by", "popularity.desc"))
+        valid_sorts = {x["value"] for x in sort_options}
+        if current_sort not in valid_sorts:
+            current_sort = "popularity.desc"
+
+        return self.async_show_form(
+            step_id="profile_filters",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "provider_scope",
+                        default=d("provider_scope", "all"),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                {
+                                    "value": "all",
+                                    "label": "All regional providers",
+                                },
+                                {
+                                    "value": "my",
+                                    "label": "My providers",
+                                },
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        "min_rating",
+                        default=d("min_rating", 0),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=0,
+                            max=10,
+                            step=0.1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Required(
+                        "min_votes",
+                        default=d("min_votes", 0),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=0,
+                            max=1_000_000,
+                            step=100,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        "include_genres",
+                        default=d("include_genres", ""),
+                    ): TextSelector(TextSelectorConfig()),
+                    vol.Optional(
+                        "exclude_genres",
+                        default=d("exclude_genres", ""),
+                    ): TextSelector(TextSelectorConfig()),
+                    vol.Required(
+                        "genre_match",
+                        default=d("genre_match", "any"),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                {
+                                    "value": "any",
+                                    "label": "Any included genre",
+                                },
+                                {
+                                    "value": "all",
+                                    "label": "All included genres",
+                                },
+                            ],
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(
+                        "release_date_gte",
+                        default=d("release_date_gte", ""),
+                    ): TextSelector(TextSelectorConfig()),
+                    vol.Optional(
+                        "release_date_lte",
+                        default=d("release_date_lte", ""),
+                    ): TextSelector(TextSelectorConfig()),
+                    vol.Required(
+                        "sort_by",
+                        default=current_sort,
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=sort_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Required(
+                        "max_pages",
+                        default=d("max_pages", 5),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=20,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Required(
+                        "limit",
+                        default=d("limit", 30),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=200,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
+        )
+
+    def _save_profile(self) -> FlowResult:
+        """Persist the assembled profile draft."""
+        profiles = self._profiles()
+        profile = dict(self._profile_draft)
+
+        name = str(profile["name"]).strip()
+        base_id = (
+            self._editing_profile_id
+            or slugify(name)
+            or "discovery"
+        )
+        existing_ids = {
+            str(item.get("id"))
+            for item in profiles
+            if str(item.get("id")) != self._editing_profile_id
+        }
+        profile_id = base_id
+        suffix = 2
+        while profile_id in existing_ids:
+            profile_id = f"{base_id}_{suffix}"
+            suffix += 1
+
+        profile["id"] = profile_id
+        profile["name"] = name
+
+        for key in (
+            "include_genres",
+            "exclude_genres",
+            "release_date_gte",
+            "release_date_lte",
+            "award_year_from",
+            "award_year_to",
+        ):
+            profile[key] = str(profile.get(key, "")).strip()
+
+        updated = [
+            item
+            for item in profiles
+            if str(item.get("id")) != self._editing_profile_id
+        ]
+        updated.append(profile)
+
+        merged = dict(self.config_entry.options)
+        merged[CONF_DISCOVERY_PROFILES] = updated
+
+        self._profile_draft = {}
+        self._editing_profile_id = None
+        return self.async_create_entry(data=merged)

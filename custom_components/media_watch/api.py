@@ -189,6 +189,23 @@ class TMDBApi:
         return data.get("results", [])
 
 
+
+    async def find_by_imdb_id(
+        self,
+        imdb_id: str,
+        language: str,
+    ) -> dict[str, Any]:
+        """Resolve an IMDb title ID through TMDB."""
+        return await self._request(
+            "GET",
+            f"/find/{imdb_id}",
+            params={
+                "external_source": "imdb_id",
+                "language": language,
+            },
+            include_session=False,
+        )
+
     async def get_movie_details(
         self,
         tmdb_id: int,
@@ -264,6 +281,9 @@ class TMDBApi:
         include_genres: list[int] | None = None,
         exclude_genres: list[int] | None = None,
         genre_match: str = "any",
+        release_date_gte: str | None = None,
+        release_date_lte: str | None = None,
+        sort_by: str = "popularity.desc",
         max_pages: int = 3,
     ) -> list[dict[str, Any]]:
         if not provider_ids:
@@ -279,8 +299,18 @@ class TMDBApi:
                 "with_watch_monetization_types": "flatrate|free|ads",
                 "vote_average.gte": min_rating,
                 "vote_count.gte": min_votes,
-                "sort_by": "popularity.desc",
+                "sort_by": sort_by,
                 "include_adult": "false",
+                **(
+                    {"primary_release_date.gte": release_date_gte}
+                    if release_date_gte
+                    else {}
+                ),
+                **(
+                    {"primary_release_date.lte": release_date_lte}
+                    if release_date_lte
+                    else {}
+                ),
                 **(
                     {
                         "with_genres": (
@@ -315,6 +345,9 @@ class TMDBApi:
         include_genres: list[int] | None = None,
         exclude_genres: list[int] | None = None,
         genre_match: str = "any",
+        release_date_gte: str | None = None,
+        release_date_lte: str | None = None,
+        sort_by: str = "popularity.desc",
         max_pages: int = 3,
     ) -> list[dict[str, Any]]:
         """Discover well-rated TV shows available in a region."""
@@ -332,8 +365,18 @@ class TMDBApi:
                 "with_watch_monetization_types": "flatrate|free|ads",
                 "vote_average.gte": min_rating,
                 "vote_count.gte": min_votes,
-                "sort_by": "popularity.desc",
+                "sort_by": sort_by,
                 "include_adult": "false",
+                **(
+                    {"first_air_date.gte": release_date_gte}
+                    if release_date_gte
+                    else {}
+                ),
+                **(
+                    {"first_air_date.lte": release_date_lte}
+                    if release_date_lte
+                    else {}
+                ),
                 **(
                     {
                         "with_genres": (

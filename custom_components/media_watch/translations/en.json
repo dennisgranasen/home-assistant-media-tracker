@@ -28,37 +28,77 @@
     "step": {
       "init": {
         "title": "Media Watch settings",
+        "menu_options": {
+          "general": "General settings",
+          "discovery_profiles": "Discovery profiles"
+        }
+      },
+      "general": {
+        "title": "General settings",
         "data": {
           "region": "Region",
           "language": "Language",
           "providers": "Streaming providers",
-          "min_rating": "Minimum TMDB rating",
-          "min_votes": "Minimum number of votes",
-          "discovery_limit": "Maximum discovery results",
-          "upcoming_limit": "Number of upcoming episodes",
+          "min_rating": "Legacy minimum TMDB rating",
+          "min_votes": "Legacy minimum vote count",
+          "discovery_limit": "Legacy discovery limit",
+          "upcoming_limit": "Upcoming episode count",
           "use_profile_language": "Use TMDB profile language and region",
           "fallback_language": "Fallback language",
-          "discovery_provider_scope": "Discovery provider scope",
-          "discovery_max_pages": "Discovery pages",
-          "discovery_include_genres": "Backend include genres",
-          "discovery_exclude_genres": "Backend exclude genres",
-          "discovery_genre_match": "Backend genre matching"
-        },
-        "data_description": {
-          "region": "TMDB region code, for example SE. Re-open options after changing region to refresh the provider list.",
-          "language": "TMDB language, for example sv-SE.",
-          "providers": "Your subscribed services. This selection is used for discovery and relevance only; title attributes still expose all streaming providers returned by TMDB for the selected region.",
-          "min_rating": "Minimum rating for automatic movie discovery.",
-          "min_votes": "Minimum vote count for automatic movie discovery.",
-          "discovery_limit": "Maximum number of automatically discovered movies exposed by the sensor.",
-          "upcoming_limit": "How many globally upcoming episodes to expose in the default next-up sensor.",
-          "use_profile_language": "Use the primary language and country returned by your TMDB account. Disable this to use the manual Language and Region fields below.",
-          "fallback_language": "Used when translated metadata is missing, for example en-US. TMDB has a fallback-language setting on its website, but the public account API does not expose that value, so Media Watch must store it separately.",
-          "discovery_provider_scope": "Choose whether TMDB discovery itself searches all providers in the region or only your selected providers.",
-          "discovery_max_pages": "How many TMDB result pages to fetch before local filtering. Higher values create a larger candidate pool but increase API requests.",
-          "discovery_include_genres": "Comma-separated TMDB genre IDs used directly in the TMDB discover query, e.g. 878,14.",
-          "discovery_exclude_genres": "Comma-separated TMDB genre IDs excluded directly in the TMDB discover query.",
-          "discovery_genre_match": "Require any or all included genres in the TMDB discover query."
+          "discovery_provider_scope": "Legacy provider scope",
+          "discovery_max_pages": "Legacy discovery pages",
+          "discovery_include_genres": "Legacy include genres",
+          "discovery_exclude_genres": "Legacy exclude genres",
+          "discovery_genre_match": "Legacy genre matching"
+        }
+      },
+      "discovery_profiles": {
+        "title": "Discovery profiles",
+        "data": {
+          "profile_action": "Choose action"
+        }
+      },
+      "profile": {
+        "title": "Discovery profile",
+        "description": "Choose the media type and discovery source first. The next step only shows award sources valid for that media type.",
+        "data": {
+          "name": "Name",
+          "media_type": "Media type",
+          "source": "Discovery source"
+        }
+      },
+      "profile_awards": {
+        "title": "Awards",
+        "description": "Only implemented award sources relevant to the selected media type are shown.",
+        "data": {
+          "award_source": "Award source"
+        }
+      },
+      "profile_award_details": {
+        "title": "Award filters",
+        "description": "Categories are loaded from the selected award source, so invalid category/source combinations cannot be selected.",
+        "data": {
+          "award_preset": "Quick list",
+          "award_category": "Category",
+          "award_status": "Status",
+          "award_year_from": "Award year from",
+          "award_year_to": "Award year to"
+        }
+      },
+      "profile_filters": {
+        "title": "Discovery filters",
+        "data": {
+          "provider_scope": "Providers",
+          "min_rating": "Minimum rating",
+          "min_votes": "Minimum votes",
+          "include_genres": "Include genre IDs",
+          "exclude_genres": "Exclude genre IDs",
+          "genre_match": "Genre matching",
+          "release_date_gte": "Released on/after",
+          "release_date_lte": "Released on/before",
+          "sort_by": "Sort",
+          "max_pages": "TMDB pages",
+          "limit": "Feed size"
         }
       }
     },
