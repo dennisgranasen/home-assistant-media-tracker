@@ -122,6 +122,24 @@ def test_startup_deferred_work_uses_background_tasks() -> None:
     }
 
 
+def test_config_entry_unload_callbacks_do_not_return_task_cancel_bool() -> None:
+    """Task.cancel returns bool and cannot be an async_on_unload job."""
+    path = ROOT / "custom_components/media_watch/__init__.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    invalid = [
+        call.lineno
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "async_on_unload"
+        and call.args
+        and isinstance(call.args[0], ast.Attribute)
+        and call.args[0].attr == "cancel"
+    ]
+
+    assert invalid == []
+
+
 def test_all_registered_award_adapters_implement_interface() -> None:
     adapter_dir = ROOT / "custom_components/media_watch/award_adapters"
     classes: dict[str, ast.ClassDef] = {}

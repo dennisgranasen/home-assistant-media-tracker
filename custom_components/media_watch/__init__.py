@@ -165,7 +165,7 @@ async def async_setup_entry(
         coordinator.async_request_refresh(),
         "media_watch_deferred_discovery",
     )
-    entry.async_on_unload(deferred_refresh.cancel)
+    coordinator._deferred_refresh_task = deferred_refresh
 
     def schedule_refresh() -> None:
         """Refresh coordinator data without blocking a user action."""

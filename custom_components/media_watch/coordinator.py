@@ -116,6 +116,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             str, list[dict[str, Any]]
         ] = {}
         self._watchlist_award_task: asyncio.Task[None] | None = None
+        self._deferred_refresh_task: asyncio.Task[None] | None = None
         self._defer_discovery_profiles = True
 
     def _option(self, key: str, default: Any) -> Any:
@@ -512,11 +513,12 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def cancel_background_tasks(self) -> None:
         """Cancel coordinator-owned work when the config entry unloads."""
-        if (
-            self._watchlist_award_task is not None
-            and not self._watchlist_award_task.done()
+        for task in (
+            self._watchlist_award_task,
+            self._deferred_refresh_task,
         ):
-            self._watchlist_award_task.cancel()
+            if task is not None and not task.done():
+                task.cancel()
 
     def _apply_watchlist_awards(
         self,
