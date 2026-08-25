@@ -161,9 +161,9 @@ async def async_setup_entry(
     # The first refresh intentionally loads only core watchlist/TV data so
     # entity registration is not held up by external discovery/award sites.
     # Populate those feeds immediately after the entities are available.
-    deferred_refresh = hass.async_create_task(
+    deferred_refresh = hass.async_create_background_task(
         coordinator.async_request_refresh(),
-        name="media_watch_deferred_discovery",
+        "media_watch_deferred_discovery",
     )
     entry.async_on_unload(deferred_refresh.cancel)
 

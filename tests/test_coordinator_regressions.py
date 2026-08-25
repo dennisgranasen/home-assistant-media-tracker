@@ -37,7 +37,7 @@ def _coordinator() -> MediaWatchCoordinator:
     coordinator.store = _Store()
     coordinator.hass = SimpleNamespace(
         data={},
-        async_create_task=lambda coro, *, name=None: asyncio.create_task(
+        async_create_background_task=lambda coro, name: asyncio.create_task(
             coro,
             name=name,
         ),

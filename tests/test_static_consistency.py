@@ -90,6 +90,38 @@ def test_sensor_private_module_calls_resolve() -> None:
     assert missing == []
 
 
+def test_startup_deferred_work_uses_background_tasks() -> None:
+    """Long award fetches must not extend Home Assistant startup."""
+    expected = {
+        "media_watch_deferred_discovery",
+        "media_watch_watchlist_awards",
+    }
+    found: dict[str, str] = {}
+
+    for relative_path in (
+        "custom_components/media_watch/__init__.py",
+        "custom_components/media_watch/coordinator.py",
+    ):
+        tree = ast.parse(
+            (ROOT / relative_path).read_text(encoding="utf-8")
+        )
+        for call in (
+            node for node in ast.walk(tree) if isinstance(node, ast.Call)
+        ):
+            if not isinstance(call.func, ast.Attribute):
+                continue
+            for argument in call.args[1:]:
+                if (
+                    isinstance(argument, ast.Constant)
+                    and argument.value in expected
+                ):
+                    found[str(argument.value)] = call.func.attr
+
+    assert found == {
+        name: "async_create_background_task" for name in expected
+    }
+
+
 def test_all_registered_award_adapters_implement_interface() -> None:
     adapter_dir = ROOT / "custom_components/media_watch/award_adapters"
     classes: dict[str, ast.ClassDef] = {}

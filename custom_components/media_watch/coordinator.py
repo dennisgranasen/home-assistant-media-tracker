@@ -471,11 +471,13 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self._watchlist_award_task is None
                 or self._watchlist_award_task.done()
             ):
-                self._watchlist_award_task = self.hass.async_create_task(
-                    self._async_build_watchlist_top_film_index(
-                        award_years
-                    ),
-                    name="media_watch_watchlist_awards",
+                self._watchlist_award_task = (
+                    self.hass.async_create_background_task(
+                        self._async_build_watchlist_top_film_index(
+                            award_years
+                        ),
+                        "media_watch_watchlist_awards",
+                    )
                 )
                 self._watchlist_award_task.add_done_callback(
                     lambda task: self._watchlist_awards_loaded(
