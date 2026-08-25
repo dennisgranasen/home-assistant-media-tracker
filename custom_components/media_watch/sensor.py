@@ -382,10 +382,19 @@ class MovieWatchlistFeedSensor(_MediaTrackerFeedSensor):
             "tmdb_id": item.get("id"),
             "title": item.get("title"),
             "original_title": item.get("original_title"),
+            "original_language": item.get("original_language"),
             "release_date": item.get("release_date"),
             "vote_average": item.get("vote_average"),
             "vote_count": item.get("vote_count"),
             "overview": item.get("overview") or "",
+            "tagline": item.get("tagline") or "",
+            "runtime": item.get("runtime"),
+            "production_countries": item.get(
+                "production_countries", []
+            ),
+            "collection": item.get("collection"),
+            "directors": item.get("directors", []),
+            "cast": item.get("cast", []),
             "genre_ids": item.get("genre_ids", []),
             "genres": item.get("genres", []),
             "poster": (
@@ -426,10 +435,19 @@ def _movie_feed_item(
         "tmdb_id": item.get("id"),
         "title": item.get("title"),
         "original_title": item.get("original_title"),
+        "original_language": item.get("original_language"),
         "release_date": item.get("release_date"),
         "vote_average": item.get("vote_average"),
         "vote_count": item.get("vote_count"),
         "overview": item.get("overview") or "",
+        "tagline": item.get("tagline") or "",
+        "runtime": item.get("runtime"),
+        "production_countries": item.get(
+            "production_countries", []
+        ),
+        "collection": item.get("collection"),
+        "directors": item.get("directors", []),
+        "cast": item.get("cast", []),
         "poster": (
             f"https://image.tmdb.org/t/p/w500{item['poster_path']}"
             if item.get("poster_path")
@@ -447,8 +465,10 @@ def _movie_feed_item(
         "available_on_my_services": item.get(
             "available_on_my_services", False
         ),
+        "watched": item.get("watched", False),
         "recommendation": item.get("recommendation"),
         "award": item.get("award"),
+        "award_summary": item.get("award_summary"),
         "deep_link": (
             "https://www.themoviedb.org/movie/"
             f"{item.get('id')}"
@@ -600,6 +620,9 @@ class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
             "award_year_to": self._profile.get(
                 "award_year_to", ""
             ),
+            "exclude_watched": self._profile.get(
+                "exclude_watched", True
+            ),
             "profile": dict(self._profile),
         }
 
@@ -720,10 +743,19 @@ class UpcomingMediaCardSensor(MediaWatchSensor):
             "tmdb_id": item.get("id"),
             "title": item.get("title"),
             "original_title": item.get("original_title"),
+            "original_language": item.get("original_language"),
             "release_date": item.get("release_date"),
             "vote_average": item.get("vote_average"),
             "vote_count": item.get("vote_count"),
             "overview": item.get("overview") or "",
+            "tagline": item.get("tagline") or "",
+            "runtime": item.get("runtime"),
+            "production_countries": item.get(
+                "production_countries", []
+            ),
+            "collection": item.get("collection"),
+            "directors": item.get("directors", []),
+            "cast": item.get("cast", []),
             "poster": self._poster_url(
                 item.get("poster_path")
             ),

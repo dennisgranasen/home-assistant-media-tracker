@@ -934,6 +934,10 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                         )
                     ),
                     vol.Required(
+                        "exclude_watched",
+                        default=bool(d("exclude_watched", True)),
+                    ): BooleanSelector(),
+                    vol.Required(
                         "min_rating",
                         default=d("min_rating", 0),
                     ): NumberSelector(

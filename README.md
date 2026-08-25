@@ -810,3 +810,20 @@ is AST-checked so that:
 - every `self._...()` call resolves to a class method or known inherited method
 - internal keyword arguments match the target method signatures
 - all release-year helper methods are direct members of `MediaWatchCoordinator`
+
+
+### v0.17.9 watched-profile toggle and movie credits
+
+- Discovery profiles have an **Exclude watched titles** switch. It remains
+  enabled by default; disabling it lets watched titles remain in the profile
+  sensor with `watched: true` so compatible cards can unmark them.
+- Movie profile items expose the release date, director names and the first
+  three credited cast members. Credits are appended to the existing TMDB movie
+  details request, so this does not add another request per title.
+- The same existing movie-details response also supplies `runtime`, localized
+  `tagline`, `original_language`, `production_countries` and collection/
+  franchise metadata to movie profile and watchlist feeds.
+- Award-backed profile items expose a compact `award_summary` containing total
+  nominations and wins, winner state, organizations, years, categories and
+  winning categories. It is derived from the existing `award`/`awards` data
+  and performs no additional award or TMDB requests.

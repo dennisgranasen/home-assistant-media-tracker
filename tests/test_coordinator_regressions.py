@@ -80,6 +80,134 @@ def test_profile_post_filter_excludes_watchlist_watched_and_dismissed() -> None:
     assert [item["id"] for item in result] == [4, 5]
 
 
+def test_profile_post_filter_can_include_watched_titles() -> None:
+    class Store:
+        def is_watched(self, _media_type: str, tmdb_id: int) -> bool:
+            return tmdb_id == 2
+
+        def is_dismissed(self, _media_type: str, tmdb_id: int) -> bool:
+            return tmdb_id == 3
+
+    coordinator = _coordinator()
+    coordinator.store = Store()
+    items = [{"id": tmdb_id} for tmdb_id in range(1, 6)]
+
+    result = coordinator._profile_post_filter(
+        items,
+        {"exclude_watched": False},
+        "movie",
+        excluded_ids={1},
+    )
+
+    assert [item["id"] for item in result] == [2, 4, 5]
+
+
+def test_movie_enrichment_exposes_ui_metadata_without_extra_endpoint() -> None:
+    class Api:
+        async def get_movie_details(self, _tmdb_id, language):
+            if language == "en-US":
+                return {"tagline": "Fallback tagline"}
+            return {
+                "id": 7,
+                "title": "Localized title",
+                "original_title": "Original title",
+                "original_language": "fr",
+                "tagline": "",
+                "runtime": 123,
+                "production_countries": [
+                    {"iso_3166_1": "FR", "name": "France"}
+                ],
+                "belongs_to_collection": {
+                    "id": 99,
+                    "name": "Example Collection",
+                    "poster_path": "/collection.jpg",
+                    "backdrop_path": "/collection-backdrop.jpg",
+                },
+                "credits": {
+                    "crew": [
+                        {"job": "Director", "name": "Director One"},
+                        {"job": "Director", "name": "Director One"},
+                    ],
+                    "cast": [
+                        {"name": "Actor One"},
+                        {"name": "Actor Two"},
+                        {"name": "Actor Three"},
+                        {"name": "Actor Four"},
+                    ],
+                },
+                "genres": [],
+            }
+
+        async def get_movie_watch_providers(self, _tmdb_id):
+            return {"results": {}}
+
+    coordinator = _coordinator()
+    coordinator.api = Api()
+    coordinator.entry = SimpleNamespace(
+        options={
+            "language": "sv-SE",
+            "fallback_language": "en-US",
+        }
+    )
+    coordinator._profile_language = None
+    coordinator._profile_region = None
+
+    result = asyncio.run(coordinator._enrich_movie({"id": 7}))
+
+    assert result["tagline"] == "Fallback tagline"
+    assert result["runtime"] == 123
+    assert result["original_language"] == "fr"
+    assert result["production_countries"] == [
+        {"code": "FR", "name": "France"}
+    ]
+    assert result["collection"]["name"] == "Example Collection"
+    assert result["directors"] == ["Director One"]
+    assert result["cast"] == ["Actor One", "Actor Two", "Actor Three"]
+
+
+def test_award_summary_uses_source_details_without_double_counting_any() -> None:
+    item = {
+        "award": {
+            "source": "any",
+            "nominations": 3,
+            "wins": 1,
+        },
+        "awards": [
+            {
+                "source": "oscars",
+                "organization": "Academy Awards",
+                "award_years": [2024],
+                "categories": ["Best Picture"],
+                "winning_categories": ["Best Picture"],
+                "nominations": 1,
+                "wins": 1,
+            },
+            {
+                "source": "bafta_film",
+                "organization": "BAFTA Film Awards",
+                "award_years": [2024],
+                "categories": ["Best Film", "Director"],
+                "winning_categories": [],
+                "nominations": 2,
+                "wins": 0,
+            },
+        ],
+    }
+
+    summary = MediaWatchCoordinator._award_summary(item)
+
+    assert summary == {
+        "nominations": 3,
+        "wins": 1,
+        "winner": True,
+        "sources": ["bafta_film", "oscars"],
+        "organizations": ["Academy Awards", "BAFTA Film Awards"],
+        "award_years": [2024],
+        "categories": ["Best Film", "Best Picture", "Director"],
+        "winning_categories": ["Best Picture"],
+    }
+
+
 def test_web_awards_merge_categories_but_separate_same_title_by_year() -> None:
     records = [
         {

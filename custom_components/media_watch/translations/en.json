@@ -82,6 +82,7 @@
         "title": "Discovery filters",
         "data": {
           "provider_scope": "Providers",
+          "exclude_watched": "Exclude watched titles",
           "min_rating": "Minimum rating",
           "min_votes": "Minimum votes",
           "include_genres": "Include genres",

@@ -311,6 +311,45 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             fallback,
             "overview",
         )
+        tagline = self._localized_field(
+            details,
+            fallback,
+            "tagline",
+        )
+        credits = details.get("credits") or {}
+        directors = []
+        for person in credits.get("crew") or []:
+            name = str(person.get("name") or "").strip()
+            if (
+                person.get("job") == "Director"
+                and name
+                and name not in directors
+            ):
+                directors.append(name)
+        cast = [
+            str(person.get("name")).strip()
+            for person in (credits.get("cast") or [])
+            if person.get("name")
+        ][:3]
+        production_countries = [
+            {
+                "code": country.get("iso_3166_1"),
+                "name": country.get("name"),
+            }
+            for country in details.get("production_countries") or []
+            if country.get("iso_3166_1") or country.get("name")
+        ]
+        collection_data = details.get("belongs_to_collection")
+        collection = (
+            {
+                "id": collection_data.get("id"),
+                "name": collection_data.get("name"),
+                "poster_path": collection_data.get("poster_path"),
+                "backdrop_path": collection_data.get("backdrop_path"),
+            }
+            if isinstance(collection_data, dict)
+            else None
+        )
 
         return {
             "id": tmdb_id,
@@ -333,6 +372,12 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 movie.get("vote_count"),
             ),
             "overview": overview or "",
+            "tagline": tagline or "",
+            "runtime": details.get("runtime"),
+            "production_countries": production_countries,
+            "collection": collection,
+            "directors": directors,
+            "cast": cast,
             "poster_path": details.get(
                 "poster_path",
                 movie.get("poster_path"),
@@ -873,6 +918,75 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return str(item.get("first_air_date") or "")
         return str(item.get("release_date") or "")
 
+    @staticmethod
+    def _award_summary(
+        item: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Build compact UI metadata from existing award facts."""
+        raw_awards = item.get("awards")
+        if isinstance(raw_awards, list) and raw_awards:
+            awards = [
+                award
+                for award in raw_awards
+                if isinstance(award, dict)
+            ]
+        else:
+            award = item.get("award")
+            awards = [award] if isinstance(award, dict) else []
+
+        if not awards:
+            return None
+
+        sources = sorted(
+            {
+                str(award["source"])
+                for award in awards
+                if award.get("source")
+            }
+        )
+        organizations = sorted(
+            {
+                str(award.get("organization") or award.get("source"))
+                for award in awards
+                if award.get("organization") or award.get("source")
+            }
+        )
+        nominations = sum(
+            int(award.get("nominations", 0)) for award in awards
+        )
+        wins = sum(int(award.get("wins", 0)) for award in awards)
+
+        return {
+            "nominations": nominations,
+            "wins": wins,
+            "winner": wins > 0,
+            "sources": sources,
+            "organizations": organizations,
+            "award_years": sorted(
+                {
+                    int(year)
+                    for award in awards
+                    for year in award.get("award_years", [])
+                }
+            ),
+            "categories": sorted(
+                {
+                    str(category)
+                    for award in awards
+                    for category in award.get("categories", [])
+                }
+            ),
+            "winning_categories": sorted(
+                {
+                    str(category)
+                    for award in awards
+                    for category in award.get(
+                        "winning_categories", []
+                    )
+                }
+            ),
+        }
+
     def _profile_post_filter(
         self,
         items: list[dict[str, Any]],
@@ -887,6 +1001,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         exclude = set(self._parse_genre_ids(profile.get("exclude_genres", "")))
         match = str(profile.get("genre_match", "any")).lower()
         provider_scope = str(profile.get("provider_scope", "all")).lower()
+        exclude_watched = bool(profile.get("exclude_watched", True))
         min_rating = float(profile.get("min_rating", 0) or 0)
         min_votes = int(profile.get("min_votes", 0) or 0)
         release_year_from = self._profile_release_year_from(profile)
@@ -897,7 +1012,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             tmdb_id = int(item["id"])
             if tmdb_id in blocked_ids:
                 continue
-            if self.store.is_watched(media_type, tmdb_id):
+            if exclude_watched and self.store.is_watched(media_type, tmdb_id):
                 continue
             if self.store.is_dismissed(media_type, tmdb_id):
                 continue
@@ -1548,6 +1663,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             provider_scope = str(
                 profile.get("provider_scope", "all")
             ).lower()
+            exclude_watched = bool(profile.get("exclude_watched", True))
             provider_ids = (
                 selected_ids
                 if provider_scope == "my"
@@ -1630,10 +1746,9 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         ),
                         max_pages=max_pages,
                     )
-                    exclude_ids = {
-                        *self.store.watched_movies,
-                        *watchlist_ids,
-                    }
+                    exclude_ids = set(watchlist_ids)
+                    if exclude_watched:
+                        exclude_ids.update(self.store.watched_movies)
                     raw = [
                         item
                         for item in raw
@@ -1668,10 +1783,9 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         ),
                         max_pages=max_pages,
                     )
-                    exclude_ids = {
-                        *self.store.watched_tv,
-                        *watchlist_tv_ids,
-                    }
+                    exclude_ids = set(watchlist_tv_ids)
+                    if exclude_watched:
+                        exclude_ids.update(self.store.watched_tv)
                     raw = [
                         item
                         for item in raw
@@ -1699,6 +1813,11 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     else watchlist_tv_ids
                 ),
             )[:limit]
+
+            for item in items:
+                award_summary = self._award_summary(item)
+                if award_summary is not None:
+                    item["award_summary"] = award_summary
 
             output[profile_id] = {
                 "id": profile_id,
@@ -1859,10 +1978,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             oscar_movies = [
                 movie
                 for movie in oscar_movies
-                if not self.store.is_watched(
-                    "movie", int(movie["id"])
-                )
-                and int(movie["id"]) not in watchlist_ids
+                if int(movie["id"]) not in watchlist_ids
                 and not self.store.is_dismissed(
                     "movie", int(movie["id"])
                 )

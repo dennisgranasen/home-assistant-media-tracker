@@ -190,6 +190,7 @@ def test_config_profile_fields_match_coordinator_expectations() -> None:
         "award_year_from",
         "award_year_to",
         "provider_scope",
+        "exclude_watched",
         "min_rating",
         "min_votes",
         "include_genres",

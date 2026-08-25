@@ -250,7 +250,10 @@ class TMDBApi:
         return await self._request(
             "GET",
             f"/movie/{tmdb_id}",
-            params={"language": language},
+            params={
+                "language": language,
+                "append_to_response": "credits",
+            },
             include_session=False,
         )
 

@@ -82,6 +82,7 @@
         "title": "Discovery-filter",
         "data": {
           "provider_scope": "Providers",
+          "exclude_watched": "Exkludera sedda titlar",
           "min_rating": "Minsta betyg",
           "min_votes": "Minsta antal röster",
           "include_genres": "Inkludera genrer",
