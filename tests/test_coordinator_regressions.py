@@ -11,6 +11,8 @@ from custom_components.media_watch import coordinator as coordinator_module
 from custom_components.media_watch import api as api_module
 from custom_components.media_watch.api import TMDBApi
 from custom_components.media_watch.const import (
+    AWARD_PRESET_BEST_PICTURE_WINNERS,
+    AWARD_SOURCE_ANY,
     PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
 )
 from custom_components.media_watch.coordinator import MediaWatchCoordinator
@@ -106,7 +108,7 @@ def test_fixed_oscars_are_loaded_only_for_legacy_profile() -> None:
     assert coordinator._needs_legacy_oscar_movies() is True
 
 
-def test_award_status_is_applied_after_category_merge(
+def test_top_film_preset_merges_mapped_source_categories(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Adapter:
@@ -160,31 +162,319 @@ def test_award_status_is_applied_after_category_merge(
         }
 
     coordinator._resolve_award_title = MethodType(resolve, coordinator)
-    base_profile = {
-        "media_type": "movie",
-        "award_source": "test",
-        "award_category_mode": "generic",
-        "award_generic_category": "best_film",
+    result = asyncio.run(
+        coordinator._award_profile_candidates(
+            {
+                "media_type": "movie",
+                "award_source": "test",
+                "award_preset": AWARD_PRESET_BEST_PICTURE_WINNERS,
+            },
+            target_limit=1,
+            resolution_batch_size=1,
+        )
+    )
+
+    assert result[0]["award"]["nominations"] == 2
+    assert result[0]["award"]["wins"] == 1
+
+
+def test_award_winner_must_match_selected_category(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Adapter:
+        info = SimpleNamespace(media_types={"movie"})
+
+        async def async_latest_award_year(self, _media_type):
+            return 2026
+
+        async def async_categories(self, _media_type):
+            return [
+                {"value": "all", "label": "All"},
+                {"value": "BEST PICTURE", "label": "Best Picture"},
+            ]
+
+        async def async_filter_titles(self, **_kwargs):
+            # Simulate an adapter returning title-level facts broader than
+            # the requested category. Only the second title won Best Picture.
+            return [
+                {
+                    "title": "Won directing only",
+                    "stable_key": "wrong",
+                    "award_years": [2026],
+                    "categories": ["BEST PICTURE", "DIRECTING"],
+                    "winning_categories": ["DIRECTING"],
+                    "nominations": 2,
+                    "wins": 1,
+                },
+                {
+                    "title": "Won Best Picture",
+                    "stable_key": "right",
+                    "award_years": [2026],
+                    "categories": ["BEST PICTURE"],
+                    "winning_categories": ["BEST PICTURE"],
+                    "nominations": 1,
+                    "wins": 1,
+                },
+            ]
+
+    coordinator = _coordinator()
+    monkeypatch.setattr(
+        coordinator_module,
+        "create_adapter",
+        lambda _hass, _source: Adapter(),
+    )
+
+    async def resolve(self, item, **_kwargs):
+        return {
+            "id": 1 if item["stable_key"] == "wrong" else 2,
+            "award": {
+                "award_years": item["award_years"],
+                "categories": item["categories"],
+                "winning_categories": item["winning_categories"],
+                "nominations": item["nominations"],
+                "wins": item["wins"],
+            },
+        }
+
+    coordinator._resolve_award_title = MethodType(resolve, coordinator)
+
+    result = asyncio.run(
+        coordinator._award_profile_candidates(
+            {
+                "media_type": "movie",
+                "award_source": "test",
+                "award_category": "BEST PICTURE",
+                "award_status": "winner",
+            },
+            target_limit=10,
+            resolution_batch_size=2,
+        )
+    )
+
+    assert [item["id"] for item in result] == [2]
+
+
+def test_any_award_aggregates_sources_and_isolates_failed_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Adapter:
+        info = SimpleNamespace(media_types={"movie"})
+
+        def __init__(
+            self,
+            source: str,
+            category: str,
+            *,
+            winner: bool,
+        ) -> None:
+            self.source = source
+            self.category = category
+            self.winner = winner
+
+        async def async_categories(self, _media_type):
+            return [
+                {"value": "all", "label": "All"},
+                {"value": self.category, "label": self.category},
+            ]
+
+        async def async_filter_titles(self, **_kwargs):
+            return [
+                {
+                    "title": "Shared winner",
+                    "imdb_id": "tt1234567",
+                    "award_years": [2026],
+                    "categories": [self.category],
+                    "winning_categories": (
+                        [self.category] if self.winner else []
+                    ),
+                    "nominations": 1,
+                    "wins": 1 if self.winner else 0,
+                }
+            ]
+
+    class FailingAdapter(Adapter):
+        async def async_categories(self, _media_type):
+            raise RuntimeError("source unavailable")
+
+    adapters = {
+        "source_a": Adapter("source_a", "A BEST", winner=True),
+        "source_b": Adapter("source_b", "B BEST", winner=False),
+        "source_bad": FailingAdapter(
+            "source_bad", "BAD BEST", winner=False
+        ),
     }
+    coordinator = _coordinator()
+    monkeypatch.setattr(
+        coordinator_module,
+        "providers_for_media_type",
+        lambda _media_type: [
+            SimpleNamespace(source=source) for source in adapters
+        ],
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "create_adapter",
+        lambda _hass, source: adapters[source],
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "resolve_source_categories",
+        lambda source, generic, _options: (
+            [adapters[source].category]
+            if generic == "best_film" and source != "source_bad"
+            else []
+        ),
+    )
 
-    excluded = asyncio.run(
+    async def resolve(self, item, *, award_source, **_kwargs):
+        return {
+            "id": 42,
+            "award": {
+                "organization": award_source,
+                "source": award_source,
+                "award_years": item["award_years"],
+                "categories": item["categories"],
+                "winning_categories": item["winning_categories"],
+                "nominations": item["nominations"],
+                "wins": item["wins"],
+            },
+        }
+
+    coordinator._resolve_award_title = MethodType(resolve, coordinator)
+
+    result = asyncio.run(
         coordinator._award_profile_candidates(
-            {**base_profile, "award_status": "nominated_no_win"},
+            {
+                "media_type": "movie",
+                "award_source": AWARD_SOURCE_ANY,
+                "award_category": "best_film",
+                "award_status": "winner",
+            },
             target_limit=1,
             resolution_batch_size=1,
         )
     )
-    included = asyncio.run(
+
+    assert len(result) == 1
+    assert result[0]["award"]["source"] == AWARD_SOURCE_ANY
+    assert result[0]["award"]["sources"] == ["source_a", "source_b"]
+    assert result[0]["award"]["wins"] == 1
+    assert [award["source"] for award in result[0]["awards"]] == [
+        "source_a",
+        "source_b",
+    ]
+
+    no_win_result = asyncio.run(
         coordinator._award_profile_candidates(
-            {**base_profile, "award_status": "nominated_and_won"},
+            {
+                "media_type": "movie",
+                "award_source": AWARD_SOURCE_ANY,
+                "award_category": "best_film",
+                "award_status": "nominated_no_win",
+            },
+            target_limit=1,
+            resolution_batch_size=1,
+        )
+    )
+    assert no_win_result == []
+
+
+def test_any_award_no_win_checks_later_results_from_every_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Adapter:
+        info = SimpleNamespace(media_types={"movie"})
+
+        def __init__(self, source: str) -> None:
+            self.source = source
+
+        async def async_categories(self, _media_type):
+            return [{"value": "all", "label": "All"}]
+
+        async def async_filter_titles(self, **_kwargs):
+            if self.source == "early_nomination":
+                return [
+                    {
+                        "title": "Shared film",
+                        "imdb_id": "tt1234567",
+                        "categories": ["Best Film"],
+                        "winning_categories": [],
+                        "nominations": 1,
+                        "wins": 0,
+                    }
+                ]
+            return [
+                {
+                    "title": "Unrelated film",
+                    "imdb_id": "tt7654321",
+                    "categories": ["Best Film"],
+                    "winning_categories": [],
+                    "nominations": 1,
+                    "wins": 0,
+                },
+                {
+                    "title": "Shared film",
+                    "imdb_id": "tt1234567",
+                    "categories": ["Best Film"],
+                    "winning_categories": ["Best Film"],
+                    "nominations": 1,
+                    "wins": 1,
+                },
+            ]
+
+    adapters = {
+        source: Adapter(source)
+        for source in ("early_nomination", "later_win")
+    }
+    coordinator = _coordinator()
+    monkeypatch.setattr(
+        coordinator_module,
+        "providers_for_media_type",
+        lambda _media_type: [
+            SimpleNamespace(source=source) for source in adapters
+        ],
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "create_adapter",
+        lambda _hass, source: adapters[source],
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "resolve_source_categories",
+        lambda _source, _generic, _options: ["all"],
+    )
+
+    async def resolve(self, item, *, award_source, **_kwargs):
+        return {
+            "id": 42 if item["title"] == "Shared film" else 99,
+            "award": {
+                "organization": award_source,
+                "source": award_source,
+                "award_years": [],
+                "categories": item["categories"],
+                "winning_categories": item["winning_categories"],
+                "nominations": item["nominations"],
+                "wins": item["wins"],
+            },
+        }
+
+    coordinator._resolve_award_title = MethodType(resolve, coordinator)
+
+    result = asyncio.run(
+        coordinator._award_profile_candidates(
+            {
+                "media_type": "movie",
+                "award_source": AWARD_SOURCE_ANY,
+                "award_category": "all",
+                "award_status": "nominated_no_win",
+            },
             target_limit=1,
             resolution_batch_size=1,
         )
     )
 
-    assert excluded == []
-    assert included[0]["award"]["nominations"] == 2
-    assert included[0]["award"]["wins"] == 1
+    assert [item["id"] for item in result] == [99]
 
 
 def test_award_resolution_continues_until_filters_have_enough_candidates(

@@ -564,6 +564,8 @@ class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
             }
             if item.get("award"):
                 rendered["award"] = item.get("award")
+            if item.get("awards"):
+                rendered["awards"] = item.get("awards")
             items.append(rendered)
 
         return items

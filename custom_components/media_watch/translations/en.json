@@ -75,9 +75,7 @@
           "award_category": "Award-specific category",
           "award_status": "Status",
           "award_year_from": "Award year from",
-          "award_year_to": "Award year to",
-          "award_category_mode": "Category mode",
-          "award_generic_category": "Generic category"
+          "award_year_to": "Award year to"
         }
       },
       "profile_filters": {

@@ -25,8 +25,8 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
 )
 
-from .award_taxonomy import resolve_generic_category_options
 from .award_registry import async_categories, providers_for_media_type
+from .award_taxonomy import aliases_for, generic_categories
 from .api import TMDBApi, TMDBAuthError, TMDBError
 from .const import (
     CONF_ACCESS_TOKEN,
@@ -45,6 +45,7 @@ from .const import (
     PROFILE_AWARD_NONE,
     PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
     AWARD_SOURCE_NONE,
+    AWARD_SOURCE_ANY,
     AWARD_SOURCE_OSCARS,
     AWARD_STATUS_ANY,
     AWARD_STATUS_WINNER,
@@ -497,7 +498,11 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
         )
 
         provider_options = [
-            {"value": AWARD_SOURCE_NONE, "label": "No awards filter"}
+            {"value": AWARD_SOURCE_NONE, "label": "No awards filter"},
+            {
+                "value": AWARD_SOURCE_ANY,
+                "label": "Any award organization",
+            },
         ]
         provider_options.extend(
             {
@@ -570,17 +575,23 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
             )
         )
 
-        source_category_options = await async_categories(
-            self.hass,
-            award_source,
-            media_type,
-        )
-        generic_category_options = resolve_generic_category_options(
-            award_source,
-            media_type,
-            source_category_options,
-        )
-
+        if award_source == AWARD_SOURCE_ANY:
+            source_infos = providers_for_media_type(media_type)
+            source_category_options = [
+                option
+                for option in generic_categories(media_type)
+                if option["value"] == "all"
+                or any(
+                    aliases_for(info.source, option["value"])
+                    for info in source_infos
+                )
+            ]
+        else:
+            source_category_options = await async_categories(
+                self.hass,
+                award_source,
+                media_type,
+            )
         if user_input is not None:
             self._profile_draft.update(user_input)
             return await self.async_step_profile_filters()
@@ -594,16 +605,21 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
         if current_source_category not in source_values:
             current_source_category = "all"
 
-        generic_values = {
-            option["value"] for option in generic_category_options
-        }
-        current_generic_category = str(
-            self._profile_draft.get(
-                "award_generic_category", "all"
-            )
-        )
-        if current_generic_category not in generic_values:
-            current_generic_category = "all"
+        def optional_year_default(key: str) -> int | None:
+            value = self._profile_draft.get(key)
+            if value in (None, ""):
+                return None
+            text = str(value).strip()
+            if len(text) >= 4 and text[:4].isdigit():
+                return int(text[:4])
+            try:
+                return int(text)
+            except (TypeError, ValueError):
+                return None
+
+        award_year_from = optional_year_default("award_year_from")
+        award_year_to = optional_year_default("award_year_to")
+        current_year = dt_util.now().year
 
         return self.async_show_form(
             step_id="profile_award_details",
@@ -651,35 +667,6 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                         )
                     ),
                     vol.Required(
-                        "award_category_mode",
-                        default=self._profile_draft.get(
-                            "award_category_mode", "generic"
-                        ),
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=[
-                                {
-                                    "value": "generic",
-                                    "label": "Generic category",
-                                },
-                                {
-                                    "value": "source",
-                                    "label": "Award-specific category",
-                                },
-                            ],
-                            mode=SelectSelectorMode.DROPDOWN,
-                        )
-                    ),
-                    vol.Required(
-                        "award_generic_category",
-                        default=current_generic_category,
-                    ): SelectSelector(
-                        SelectSelectorConfig(
-                            options=generic_category_options,
-                            mode=SelectSelectorMode.DROPDOWN,
-                        )
-                    ),
-                    vol.Required(
                         "award_category",
                         default=current_source_category,
                     ): SelectSelector(
@@ -717,18 +704,36 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
-                    vol.Optional(
-                        "award_year_from",
-                        default=self._profile_draft.get(
-                            "award_year_from", ""
-                        ),
-                    ): TextSelector(TextSelectorConfig()),
-                    vol.Optional(
-                        "award_year_to",
-                        default=self._profile_draft.get(
-                            "award_year_to", ""
-                        ),
-                    ): TextSelector(TextSelectorConfig()),
+                    (
+                        vol.Optional(
+                            "award_year_from",
+                            default=award_year_from,
+                        )
+                        if award_year_from is not None
+                        else vol.Optional("award_year_from")
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1900,
+                            max=current_year,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                    (
+                        vol.Optional(
+                            "award_year_to",
+                            default=award_year_to,
+                        )
+                        if award_year_to is not None
+                        else vol.Optional("award_year_to")
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1900,
+                            max=current_year,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
                 }
             ),
         )
@@ -1137,6 +1142,8 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
         # Remove obsolete date-based discovery fields from edited profiles.
         profile.pop("release_date_gte", None)
         profile.pop("release_date_lte", None)
+        profile.pop("award_category_mode", None)
+        profile.pop("award_generic_category", None)
 
         updated = [
             item

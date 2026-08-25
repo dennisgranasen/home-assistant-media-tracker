@@ -75,9 +75,7 @@
           "award_category": "Awardspecifik kategori",
           "award_status": "Status",
           "award_year_from": "Award-år från",
-          "award_year_to": "Award-år till",
-          "award_category_mode": "Kategoriläge",
-          "award_generic_category": "Generell kategori"
+          "award_year_to": "Award-år till"
         }
       },
       "profile_filters": {

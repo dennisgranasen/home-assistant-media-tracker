@@ -185,8 +185,6 @@ def test_config_profile_fields_match_coordinator_expectations() -> None:
         "source",
         "award_source",
         "award_preset",
-        "award_category_mode",
-        "award_generic_category",
         "award_category",
         "award_status",
         "award_year_from",
@@ -230,6 +228,44 @@ def test_config_profile_fields_match_coordinator_expectations() -> None:
 
     assert current_fields <= config_constants
     assert coordinator_get_fields == recognized_fields
+
+
+def test_optional_profile_years_use_number_selectors() -> None:
+    config = _class(
+        ROOT / "custom_components/media_watch/config_flow.py",
+        "MediaWatchOptionsFlow",
+    )
+    expected_fields = {
+        "award_year_from",
+        "award_year_to",
+        "release_year_from",
+        "release_year_to",
+        "release_max_age_years",
+    }
+    selectors: dict[str, str] = {}
+
+    for mapping in (
+        node for node in ast.walk(config) if isinstance(node, ast.Dict)
+    ):
+        for key, value in zip(mapping.keys, mapping.values, strict=True):
+            if key is None or not isinstance(value, ast.Call):
+                continue
+            fields = {
+                node.value
+                for node in ast.walk(key)
+                if isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in expected_fields
+            }
+            if not fields:
+                continue
+            if isinstance(value.func, ast.Name):
+                for field in fields:
+                    selectors[field] = value.func.id
+
+    assert selectors == {
+        field: "NumberSelector" for field in expected_fields
+    }
 
 
 def test_new_entries_do_not_store_global_discovery_defaults() -> None:
