@@ -41,11 +41,6 @@ from .const import (
     CONF_REGION,
     CONF_SESSION_ID,
     CONF_USERNAME,
-    CONF_DISCOVERY_MAX_PAGES,
-    CONF_DISCOVERY_INCLUDE_GENRES,
-    CONF_DISCOVERY_EXCLUDE_GENRES,
-    CONF_DISCOVERY_GENRE_MATCH,
-    CONF_DISCOVERY_PROVIDER_SCOPE,
     CONF_DISCOVERY_PROFILES,
     PROFILE_SOURCE_DISCOVER,
     PROFILE_SOURCE_PERSONALIZED,
@@ -62,11 +57,6 @@ from .const import (
     AWARD_PRESET_LATEST_NOMINEES,
     AWARD_PRESET_BEST_PICTURE_WINNERS,
     AWARD_PRESET_BEST_PICTURE_NOMINEES,
-    DEFAULT_DISCOVERY_MAX_PAGES,
-    DEFAULT_DISCOVERY_INCLUDE_GENRES,
-    DEFAULT_DISCOVERY_EXCLUDE_GENRES,
-    DEFAULT_DISCOVERY_GENRE_MATCH,
-    DEFAULT_DISCOVERY_PROVIDER_SCOPE,
     DEFAULT_DISCOVERY_LIMIT,
     DEFAULT_FALLBACK_LANGUAGE,
     DEFAULT_LANGUAGE,
@@ -320,64 +310,6 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                     ),
                 ): TextSelector(TextSelectorConfig()),
                 vol.Required(
-                    CONF_DISCOVERY_PROVIDER_SCOPE,
-                    default=options.get(
-                        CONF_DISCOVERY_PROVIDER_SCOPE,
-                        DEFAULT_DISCOVERY_PROVIDER_SCOPE,
-                    ),
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            {"value": "all", "label": "All regional providers"},
-                            {"value": "my", "label": "My selected providers"},
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(
-                    CONF_DISCOVERY_MAX_PAGES,
-                    default=options.get(
-                        CONF_DISCOVERY_MAX_PAGES,
-                        DEFAULT_DISCOVERY_MAX_PAGES,
-                    ),
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1,
-                        max=20,
-                        step=1,
-                        mode=NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Optional(
-                    CONF_DISCOVERY_INCLUDE_GENRES,
-                    default=options.get(
-                        CONF_DISCOVERY_INCLUDE_GENRES,
-                        DEFAULT_DISCOVERY_INCLUDE_GENRES,
-                    ),
-                ): TextSelector(TextSelectorConfig()),
-                vol.Optional(
-                    CONF_DISCOVERY_EXCLUDE_GENRES,
-                    default=options.get(
-                        CONF_DISCOVERY_EXCLUDE_GENRES,
-                        DEFAULT_DISCOVERY_EXCLUDE_GENRES,
-                    ),
-                ): TextSelector(TextSelectorConfig()),
-                vol.Required(
-                    CONF_DISCOVERY_GENRE_MATCH,
-                    default=options.get(
-                        CONF_DISCOVERY_GENRE_MATCH,
-                        DEFAULT_DISCOVERY_GENRE_MATCH,
-                    ),
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            {"value": "any", "label": "Any included genre"},
-                            {"value": "all", "label": "All included genres"},
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(
                     CONF_REGION,
                     default=current_region,
                 ): TextSelector(TextSelectorConfig()),
@@ -395,46 +327,6 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                         options=provider_options,
                         multiple=True,
                         mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Required(
-                    CONF_MIN_RATING,
-                    default=options.get(
-                        CONF_MIN_RATING, DEFAULT_MIN_RATING
-                    ),
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=0,
-                        max=10,
-                        step=0.1,
-                        mode=NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Required(
-                    CONF_MIN_VOTES,
-                    default=options.get(
-                        CONF_MIN_VOTES, DEFAULT_MIN_VOTES
-                    ),
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=0,
-                        max=1_000_000,
-                        step=100,
-                        mode=NumberSelectorMode.BOX,
-                    )
-                ),
-                vol.Required(
-                    CONF_DISCOVERY_LIMIT,
-                    default=options.get(
-                        CONF_DISCOVERY_LIMIT,
-                        DEFAULT_DISCOVERY_LIMIT,
-                    ),
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1,
-                        max=100,
-                        step=1,
-                        mode=NumberSelectorMode.BOX,
                     )
                 ),
                 vol.Required(

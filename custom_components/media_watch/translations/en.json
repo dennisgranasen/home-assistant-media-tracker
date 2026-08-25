@@ -39,18 +39,11 @@
           "region": "Region",
           "language": "Language",
           "providers": "Streaming providers",
-          "min_rating": "Legacy minimum TMDB rating",
-          "min_votes": "Legacy minimum vote count",
-          "discovery_limit": "Legacy discovery limit",
           "upcoming_limit": "Upcoming episode count",
           "use_profile_language": "Use TMDB profile language and region",
-          "fallback_language": "Fallback language",
-          "discovery_provider_scope": "Legacy provider scope",
-          "discovery_max_pages": "Legacy discovery pages",
-          "discovery_include_genres": "Legacy include genres",
-          "discovery_exclude_genres": "Legacy exclude genres",
-          "discovery_genre_match": "Legacy genre matching"
-        }
+          "fallback_language": "Fallback language"
+        },
+        "description": "Account-wide settings. Discovery filtering is configured separately for each Discovery profile."
       },
       "discovery_profiles": {
         "title": "Discovery profiles",
@@ -60,7 +53,7 @@
       },
       "profile": {
         "title": "Discovery profile",
-        "description": "Choose the media type and discovery source first. The next step only shows award sources valid for that media type.",
+        "description": "Step 1 of 3: choose the profile name, media type and recommendation source.",
         "data": {
           "name": "Name",
           "media_type": "Media type",
@@ -69,14 +62,14 @@
       },
       "profile_awards": {
         "title": "Awards",
-        "description": "Only implemented award sources relevant to the selected media type are shown.",
+        "description": "Step 2 of 3: optionally constrain this profile by an award source.",
         "data": {
           "award_source": "Award source"
         }
       },
       "profile_award_details": {
         "title": "Award filters",
-        "description": "Choose a generic category for an easier cross-award setup, or use the award-specific dropdown. Both lists are generated from the selected award adapter; invalid free-text categories are not used.",
+        "description": "Step 2 of 3: choose award category, status and year range. The next screen contains the profile's ordinary discovery filters.",
         "data": {
           "award_preset": "Quick list",
           "award_category": "Award-specific category",
@@ -102,7 +95,7 @@
           "max_pages": "TMDB pages",
           "limit": "Feed size"
         },
-        "description": "Genres are loaded from TMDB for the selected media type and stored internally by stable genre ID."
+        "description": "Set rating, vote count, genres, providers, release dates, sorting and queue size for this profile."
       }
     },
     "error": {

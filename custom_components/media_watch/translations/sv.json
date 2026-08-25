@@ -39,18 +39,11 @@
           "region": "Region",
           "language": "Språk",
           "providers": "Streamingtjänster",
-          "min_rating": "Äldre minsta TMDB-betyg",
-          "min_votes": "Äldre minsta antal röster",
-          "discovery_limit": "Äldre discovery-gräns",
           "upcoming_limit": "Antal kommande avsnitt",
           "use_profile_language": "Använd språk och region från TMDB-profilen",
-          "fallback_language": "Fallback-språk",
-          "discovery_provider_scope": "Äldre provider-omfång",
-          "discovery_max_pages": "Äldre discovery-sidor",
-          "discovery_include_genres": "Äldre inkluderade genrer",
-          "discovery_exclude_genres": "Äldre exkluderade genrer",
-          "discovery_genre_match": "Äldre genrematchning"
-        }
+          "fallback_language": "Fallback-språk"
+        },
+        "description": "Gemensamma inställningar. Discovery-filter ställs in separat för varje Discovery-profil."
       },
       "discovery_profiles": {
         "title": "Discovery-profiler",
@@ -60,7 +53,7 @@
       },
       "profile": {
         "title": "Discovery-profil",
-        "description": "Välj först mediatyp och discoverykälla. Nästa steg visar bara award-källor som är relevanta för den valda mediatypen.",
+        "description": "Steg 1 av 3: välj profilnamn, mediatyp och rekommendationskälla.",
         "data": {
           "name": "Namn",
           "media_type": "Mediatyp",
@@ -69,14 +62,14 @@
       },
       "profile_awards": {
         "title": "Awards",
-        "description": "Bara implementerade award-källor som passar vald mediatyp visas.",
+        "description": "Steg 2 av 3: begränsa profilen med en award-källa om du vill.",
         "data": {
           "award_source": "Award-källa"
         }
       },
       "profile_award_details": {
         "title": "Award-filter",
-        "description": "Välj en generell kategori för enklare konfiguration mellan olika filmpriser, eller använd den awardspecifika listan. Listorna byggs från vald adapter och fria ogiltiga kategorinamn används inte.",
+        "description": "Steg 2 av 3: välj award-kategori, status och årsspann. Nästa sida innehåller profilens vanliga discovery-filter.",
         "data": {
           "award_preset": "Snabblista",
           "award_category": "Awardspecifik kategori",
@@ -102,7 +95,7 @@
           "max_pages": "TMDB-sidor",
           "limit": "Storlek på feed"
         },
-        "description": "Genrer hämtas från TMDB för den valda mediatypen och sparas internt med stabila genre-ID:n."
+        "description": "Ställ in betyg, antal röster, genrer, providers, releasedatum, sortering och köstorlek för just den här profilen."
       }
     },
     "error": {

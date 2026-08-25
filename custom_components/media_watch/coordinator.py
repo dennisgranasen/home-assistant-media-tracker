@@ -20,35 +20,19 @@ from .award_registry import create_adapter
 from .api import TMDBApi, TMDBError
 from .const import (
     CONF_ACCOUNT_ID,
-    CONF_DISCOVERY_LIMIT,
     CONF_FALLBACK_LANGUAGE,
     CONF_LANGUAGE,
     CONF_USE_PROFILE_LANGUAGE,
-    CONF_MIN_RATING,
-    CONF_MIN_VOTES,
     CONF_PROVIDERS,
     CONF_REGION,
     CONF_UPCOMING_LIMIT,
-    DEFAULT_DISCOVERY_LIMIT,
     DEFAULT_FALLBACK_LANGUAGE,
     DEFAULT_LANGUAGE,
     DEFAULT_USE_PROFILE_LANGUAGE,
-    DEFAULT_MIN_RATING,
-    DEFAULT_MIN_VOTES,
     DEFAULT_REGION,
     DEFAULT_UPCOMING_LIMIT,
     DOMAIN,
-    CONF_DISCOVERY_MAX_PAGES,
-    CONF_DISCOVERY_INCLUDE_GENRES,
-    CONF_DISCOVERY_EXCLUDE_GENRES,
-    CONF_DISCOVERY_GENRE_MATCH,
-    CONF_DISCOVERY_PROVIDER_SCOPE,
     CONF_DISCOVERY_PROFILES,
-    DEFAULT_DISCOVERY_MAX_PAGES,
-    DEFAULT_DISCOVERY_INCLUDE_GENRES,
-    DEFAULT_DISCOVERY_EXCLUDE_GENRES,
-    DEFAULT_DISCOVERY_GENRE_MATCH,
-    DEFAULT_DISCOVERY_PROVIDER_SCOPE,
     UPDATE_INTERVAL,
     OSCAR_BEST_PICTURE_2026,
     PROFILE_SOURCE_DISCOVER,
@@ -1210,8 +1194,6 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if award_source != AWARD_SOURCE_NONE:
                 items = await self._award_profile_candidates(
                     profile,
-                    media_type=media_type,
-                    award_source=award_source,
                     resolution_limit=max(limit * 4, 50),
                 )
             elif (
@@ -1375,94 +1357,6 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # providers known by TMDB for the configured region. The
             # companion card can then filter the same feed to either all
             # regional providers or only the user's selected providers.
-            discovery_provider_scope = str(
-                self._option(
-                    CONF_DISCOVERY_PROVIDER_SCOPE,
-                    DEFAULT_DISCOVERY_PROVIDER_SCOPE,
-                )
-            ).lower()
-            discovery_max_pages = max(
-                1,
-                min(
-                    20,
-                    int(
-                        self._option(
-                            CONF_DISCOVERY_MAX_PAGES,
-                            DEFAULT_DISCOVERY_MAX_PAGES,
-                        )
-                    ),
-                ),
-            )
-            discovery_include_genres = self._parse_genre_ids(
-                self._option(
-                    CONF_DISCOVERY_INCLUDE_GENRES,
-                    DEFAULT_DISCOVERY_INCLUDE_GENRES,
-                )
-            )
-            discovery_exclude_genres = self._parse_genre_ids(
-                self._option(
-                    CONF_DISCOVERY_EXCLUDE_GENRES,
-                    DEFAULT_DISCOVERY_EXCLUDE_GENRES,
-                )
-            )
-            discovery_genre_match = str(
-                self._option(
-                    CONF_DISCOVERY_GENRE_MATCH,
-                    DEFAULT_DISCOVERY_GENRE_MATCH,
-                )
-            ).lower()
-            if discovery_genre_match not in {"any", "all"}:
-                discovery_genre_match = "any"
-
-            discovery_provider_ids = (
-                sorted(selected_ids)
-                if discovery_provider_scope == "my"
-                else sorted(provider_catalog)
-            )
-            tv_discovery_provider_ids = (
-                sorted(selected_ids)
-                if discovery_provider_scope == "my"
-                else sorted(
-                    {
-                        int(provider["provider_id"])
-                        for provider in tv_providers
-                        if provider.get("provider_id") is not None
-                    }
-                )
-            )
-
-            discovered = await self.api.discover_movies(
-                region=self.region,
-                language=self.language,
-                provider_ids=discovery_provider_ids,
-                min_rating=float(
-                    self._option(CONF_MIN_RATING, DEFAULT_MIN_RATING)
-                ),
-                min_votes=int(
-                    self._option(CONF_MIN_VOTES, DEFAULT_MIN_VOTES)
-                ),
-                include_genres=discovery_include_genres,
-                exclude_genres=discovery_exclude_genres,
-                genre_match=discovery_genre_match,
-                max_pages=discovery_max_pages,
-            )
-
-            discovered_tv = await self.api.discover_tv(
-                region=self.region,
-                language=self.language,
-                provider_ids=tv_discovery_provider_ids,
-                min_rating=float(
-                    self._option(CONF_MIN_RATING, DEFAULT_MIN_RATING)
-                ),
-                min_votes=int(
-                    self._option(CONF_MIN_VOTES, DEFAULT_MIN_VOTES)
-                ),
-                include_genres=discovery_include_genres,
-                exclude_genres=discovery_exclude_genres,
-                genre_match=discovery_genre_match,
-                max_pages=discovery_max_pages,
-            )
-
             visible_watchlist = [
                 movie
                 for movie in watchlist_movies
@@ -1478,79 +1372,83 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for show in watchlist_tv
             }
 
-            visible_discovery = [
-                movie
-                for movie in discovered
-                if int(movie["id"]) not in watchlist_ids
-                and not self.store.is_watched("movie", int(movie["id"]))
-                and not self.store.is_dismissed("movie", int(movie["id"]))
-            ][: int(
-                self._option(
-                    CONF_DISCOVERY_LIMIT,
-                    DEFAULT_DISCOVERY_LIMIT,
-                )
-            )]
-
-            visible_tv_discovery = [
-                show
-                for show in discovered_tv
-                if int(show["id"]) not in watchlist_tv_ids
-                and not self.store.is_watched("tv", int(show["id"]))
-                and not self.store.is_dismissed("tv", int(show["id"]))
-            ][: int(
-                self._option(
-                    CONF_DISCOVERY_LIMIT,
-                    DEFAULT_DISCOVERY_LIMIT,
-                )
-            )]
-
             movie_details = await asyncio.gather(
                 *(self._enrich_movie(movie) for movie in visible_watchlist)
             )
             tv_details = await asyncio.gather(
                 *(self._enrich_tv(show) for show in watchlist_tv)
             )
-            discovery_details = await asyncio.gather(
-                *(self._enrich_movie(movie) for movie in visible_discovery)
-            )
-            tv_discovery_details = await asyncio.gather(
-                *(
-                    self._enrich_tv_discovery(show)
-                    for show in visible_tv_discovery
-                )
-            )
 
-            personalized_limit = int(
-                self._option(
-                    CONF_DISCOVERY_LIMIT,
-                    DEFAULT_DISCOVERY_LIMIT,
-                )
-            )
-
-            personalized_movies = await self._personalized_recommendations(
-                media_type="movie",
-                seed_ids=[
-                    *self.store.watched_movies,
-                    *watchlist_ids,
+            # Personalized recommendations are no longer a global feed.
+            # Build candidate pools only when a configured profile needs them.
+            profiles = self.discovery_profiles
+            movie_personalized_limit = max(
+                [
+                    max(
+                        50,
+                        min(
+                            800,
+                            int(profile.get("limit", 30) or 30) * 4,
+                        ),
+                    )
+                    for profile in profiles
+                    if str(profile.get("source", "")).lower()
+                    == PROFILE_SOURCE_PERSONALIZED
+                    and str(profile.get("media_type", "movie")).lower()
+                    == "movie"
                 ],
-                exclude_ids={
-                    *self.store.watched_movies,
-                    *watchlist_ids,
-                },
-                limit=personalized_limit,
+                default=0,
+            )
+            tv_personalized_limit = max(
+                [
+                    max(
+                        50,
+                        min(
+                            800,
+                            int(profile.get("limit", 30) or 30) * 4,
+                        ),
+                    )
+                    for profile in profiles
+                    if str(profile.get("source", "")).lower()
+                    == PROFILE_SOURCE_PERSONALIZED
+                    and str(profile.get("media_type", "movie")).lower()
+                    == "tv"
+                ],
+                default=0,
             )
 
-            personalized_tv = await self._personalized_recommendations(
-                media_type="tv",
-                seed_ids=[
-                    *self.store.watched_tv,
-                    *watchlist_tv_ids,
-                ],
-                exclude_ids={
-                    *self.store.watched_tv,
-                    *watchlist_tv_ids,
-                },
-                limit=personalized_limit,
+            personalized_movies = (
+                await self._personalized_recommendations(
+                    media_type="movie",
+                    seed_ids=[
+                        *self.store.watched_movies,
+                        *watchlist_ids,
+                    ],
+                    exclude_ids={
+                        *self.store.watched_movies,
+                        *watchlist_ids,
+                    },
+                    limit=movie_personalized_limit,
+                )
+                if movie_personalized_limit
+                else []
+            )
+
+            personalized_tv = (
+                await self._personalized_recommendations(
+                    media_type="tv",
+                    seed_ids=[
+                        *self.store.watched_tv,
+                        *watchlist_tv_ids,
+                    ],
+                    exclude_ids={
+                        *self.store.watched_tv,
+                        *watchlist_tv_ids,
+                    },
+                    limit=tv_personalized_limit,
+                )
+                if tv_personalized_limit
+                else []
             )
 
             oscar_movies = await self._resolve_oscar_best_picture()
@@ -1682,22 +1580,10 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "episodes_today": episodes_today,
                 "episodes_next_7_days": episodes_next_7_days,
                 "episodes_next_30_days": episodes_next_30_days,
-                "discovered_movies": discovery_details,
-                "discovered_tv": tv_discovery_details,
-                "personalized_movies": personalized_movies,
-                "personalized_tv": personalized_tv,
                 "oscar_movies": oscar_movies,
                 "discovery_profiles": discovery_profiles,
                 "selected_providers": selected_providers,
                 "provider_ids": selected_ids,
-                "discovery_provider_ids": discovery_provider_ids,
-                "discovery_backend_filter": {
-                    "provider_scope": discovery_provider_scope,
-                    "include_genres": discovery_include_genres,
-                    "exclude_genres": discovery_exclude_genres,
-                    "genre_match": discovery_genre_match,
-                    "max_pages": discovery_max_pages,
-                },
                 "watched_movies": self.store.watched_movies,
                 "dismissed_movies": self.store.dismissed_movies,
             }

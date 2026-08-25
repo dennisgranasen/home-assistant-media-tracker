@@ -623,3 +623,43 @@ Hardened the Hong Kong Film Awards adapter and award profile configuration:
 
 This specifically fixes failures while creating a Hong Kong Film Awards
 discovery profile.
+
+
+### v0.16.4 award resolver call fix
+
+Fixed award-backed discovery queues crashing because a stale `media_type=`
+keyword was still passed to `_award_profile_candidates()`. Media type is now
+derived from the profile inside the resolver.
+
+The profile flow text now explicitly presents the configuration as three
+stages: profile basics, optional award constraints, and final discovery
+filters.
+
+
+### v0.16.5 award resolver and profile UX cleanup
+
+Fixed the award-backed discovery crash by removing the stale `award_source=` keyword from `_award_profile_candidates()`. Media type and award source are both read directly from the profile.
+
+The General options page no longer shows the legacy global discovery filters. Rating, votes, genres, provider scope, pages and queue size are configured per Discovery profile. Existing legacy option values are retained internally for backwards compatibility with the older fixed discovery sensors.
+
+
+### v0.17.0 profile-only discovery
+
+Removed the legacy global discovery model.
+
+Discovery is now exclusively profile-based:
+
+- no global discovery rating/genre/provider/page/limit settings
+- no fixed `Discovery`, `TV discovery`, `Personalized movies`,
+  `Personalized TV`, `Movie discovery` or legacy Oscars discovery sensors
+- no global movie/TV Discover API calls on every coordinator refresh
+- each configured Discovery profile remains its own Home Assistant entity
+- personalized recommendation candidate pools are generated only when one or
+  more personalized profiles actually exist, and their size is derived from
+  those profiles' own limits
+
+Global integration options are now reserved for truly shared settings such as
+TMDB language/region, selected streaming providers and episode-calendar
+behavior.
+
+Existing profile entities and their stable unique IDs are unchanged.
