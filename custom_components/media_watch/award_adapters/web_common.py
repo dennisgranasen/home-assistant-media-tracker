@@ -73,10 +73,17 @@ def aggregate_records(records: list[dict[str, Any]], status: str) -> list[dict[s
                 candidates = [title]
         if not candidates:
             continue
-        key = str(record.get("stable_key") or candidates[-1]).casefold()
+        key = str(
+            record.get("stable_key")
+            or (
+                f"{candidates[-1]}:"
+                f"{record.get('release_year') or record.get('award_year') or ''}"
+            )
+        ).casefold()
         item = grouped.setdefault(
             key,
             {
+                "stable_key": key,
                 "title": candidates[-1],
                 "title_candidates": [],
                 "media_type": record.get("media_type", "movie"),

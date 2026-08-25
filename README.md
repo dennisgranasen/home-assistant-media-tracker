@@ -793,3 +793,19 @@ A static consistency audit is now performed during development against
 
 This audit also re-checks the recent award resolver and release-year helper
 changes so missing-method regressions are caught before packaging.
+
+
+### v0.17.8 actual coordinator hotfix
+
+This release is built using the exact `coordinator.py` supplied from the
+installed v0.17.6 instance.
+
+That file called `_year_from_date()` from `_profile_post_filter()` but did not
+define `_year_from_date()` on `MediaWatchCoordinator`.
+
+The helper is now added directly to the class. The final packaged coordinator
+is AST-checked so that:
+
+- every `self._...()` call resolves to a class method or known inherited method
+- internal keyword arguments match the target method signatures
+- all release-year helper methods are direct members of `MediaWatchCoordinator`

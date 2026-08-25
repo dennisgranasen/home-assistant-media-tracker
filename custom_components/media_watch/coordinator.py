@@ -856,6 +856,16 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             and profile.get("name")
         ]
 
+    def _needs_legacy_oscar_movies(self) -> bool:
+        """Return whether a v0.13 fixed-Oscars profile still needs data."""
+        return any(
+            str(profile.get("award_filter", PROFILE_AWARD_NONE)).lower()
+            == PROFILE_AWARD_OSCARS_BEST_PICTURE_2026
+            and str(profile.get("media_type", "movie")).lower()
+            == "movie"
+            for profile in self.discovery_profiles
+        )
+
     @staticmethod
     def _profile_date(item: dict[str, Any], media_type: str) -> str:
         if media_type == "tv":
@@ -875,22 +885,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         provider_scope = str(profile.get("provider_scope", "all")).lower()
         min_rating = float(profile.get("min_rating", 0) or 0)
         min_votes = int(profile.get("min_votes", 0) or 0)
-        release_year_from = self._parse_optional_year(
-            profile.get("release_year_from")
-        )
-        release_year_to = self._parse_optional_year(
-            profile.get("release_year_to")
-        )
-        max_age_years = self._parse_optional_int(
-            profile.get("release_max_age_years")
-        )
-
-        if max_age_years is not None and max_age_years >= 0:
-            rolling_from = dt_util.now().year - max_age_years
-            release_year_from = max(
-                release_year_from or rolling_from,
-                rolling_from,
-            )
+        release_year_from = self._profile_release_year_from(profile)
+        release_year_to = self._profile_release_year_to(profile)
 
         result: list[dict[str, Any]] = []
         for item in items:
@@ -965,7 +961,20 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 award_source,
             )
             return None
-        cache_key = f"{award_source}:{media_type}:{award_item.get('imdb_id') or award_item.get('tmdb_id') or award_item.get('title')}"
+        award_years = award_item.get("award_years") or []
+        year_hint = (
+            award_item.get("release_year")
+            or (max(award_years) if award_years else "")
+        )
+        identity = (
+            award_item.get("imdb_id")
+            or award_item.get("tmdb_id")
+            or award_item.get("stable_key")
+            or str(award_item.get("title") or "").casefold()
+        )
+        cache_key = (
+            f"{award_source}:{media_type}:{identity}:{year_hint}"
+        )
         if cache_key in self._award_tmdb_cache:
             cached = self._award_tmdb_cache[cache_key]
             if cached is None:
@@ -1043,7 +1052,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self,
         profile: dict[str, Any],
         *,
-        resolution_limit: int,
+        resolution_batch_size: int,
     ) -> list[dict[str, Any]]:
         """Build an award candidate set using any registered adapter."""
         source = str(profile.get("award_source", AWARD_SOURCE_NONE))
@@ -1123,8 +1132,9 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) or ["all"]
             status = AWARD_STATUS_ANY
 
-        # A generic concept may map to more than one historical/source category.
-        # Query each category and collapse duplicate titles afterwards.
+        # A generic concept may map to more than one historical/source
+        # category. Fetch unfiltered title facts so status can be evaluated
+        # across the complete mapped category scope after merging.
         raw_titles: list[dict[str, Any]] = []
         for category in categories:
             raw_titles.extend(
@@ -1133,7 +1143,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     year_from=year_from,
                     year_to=year_to,
                     category=category,
-                    status=status,
+                    status=AWARD_STATUS_ANY,
                 )
             )
 
@@ -1144,7 +1154,10 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 item.get("tmdb_id")
                 or item.get("imdb_id")
                 or item.get("stable_key")
-                or f'{item.get("title","").casefold()}:{item.get("release_year","")}'
+                or (
+                    f'{item.get("title", "").casefold()}:'
+                    f'{item.get("release_year", "")}'
+                )
             )
             if key not in merged:
                 merged[key] = dict(item)
@@ -1168,28 +1181,84 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 set(existing.get("winning_categories", []))
                 | set(item.get("winning_categories", []))
             )
-            existing["nominations"] = max(
-                int(existing.get("nominations", 0)),
-                int(item.get("nominations", 0)),
+            existing["nominations"] = (
+                int(existing.get("nominations", 0))
+                + int(item.get("nominations", 0))
             )
-            existing["wins"] = max(
-                int(existing.get("wins", 0)),
-                int(item.get("wins", 0)),
+            existing["wins"] = (
+                int(existing.get("wins", 0))
+                + int(item.get("wins", 0))
             )
 
-        award_titles = list(merged.values())[:resolution_limit]
+        def status_matches(item: dict[str, Any]) -> bool:
+            nominations = int(item.get("nominations", 0))
+            wins = int(item.get("wins", 0))
+            if status == AWARD_STATUS_WINNER:
+                return wins >= 1
+            if status == AWARD_STATUS_NOMINATED_NO_WIN:
+                return nominations >= 1 and wins == 0
+            if status == AWARD_STATUS_NOMINATED_AND_WON:
+                return nominations >= 1 and wins >= 1
+            return True
 
-        resolved = await asyncio.gather(
-            *(
-                self._resolve_award_title(
-                    item,
-                    media_type=media_type,
-                    award_source=source,
+        award_titles = [
+            item for item in merged.values() if status_matches(item)
+        ]
+
+        # Resolve every award candidate before the profile post-filter. A
+        # fixed pre-filter cap loses valid historical matches when provider,
+        # genre, rating, or release-year filters reject early candidates.
+        # Batching bounds concurrent TMDB work without changing correctness.
+        resolved: list[dict[str, Any]] = []
+        batch_size = max(1, resolution_batch_size)
+        for offset in range(0, len(award_titles), batch_size):
+            batch = award_titles[offset : offset + batch_size]
+            resolved.extend(
+                item
+                for item in await asyncio.gather(
+                    *(
+                        self._resolve_award_title(
+                            item,
+                            media_type=media_type,
+                            award_source=source,
+                        )
+                        for item in batch
+                    )
                 )
-                for item in award_titles
+                if item is not None
             )
-        )
-        return [item for item in resolved if item is not None]
+
+        # Different source title spellings may still resolve to one TMDB ID.
+        # Keep a single queue item and preserve all category/year metadata.
+        deduplicated: dict[int, dict[str, Any]] = {}
+        for item in resolved:
+            tmdb_id = int(item["id"])
+            existing = deduplicated.get(tmdb_id)
+            if existing is None:
+                deduplicated[tmdb_id] = item
+                continue
+
+            existing_award = existing.get("award", {})
+            item_award = item.get("award", {})
+            for field in (
+                "award_years",
+                "categories",
+                "winning_categories",
+            ):
+                existing_award[field] = sorted(
+                    set(existing_award.get(field, []))
+                    | set(item_award.get(field, []))
+                )
+            existing_award["nominations"] = max(
+                int(existing_award.get("nominations", 0)),
+                int(item_award.get("nominations", 0)),
+            )
+            existing_award["wins"] = max(
+                int(existing_award.get("wins", 0)),
+                int(item_award.get("wins", 0)),
+            )
+
+        return list(deduplicated.values())
 
     def _profile_release_year_from(
         self,
@@ -1221,11 +1290,18 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         profile: dict[str, Any],
     ) -> str | None:
         """Translate a profile upper year bound to TMDB date format."""
-        year = self._parse_optional_year(
+        year = self._profile_release_year_to(profile)
+        return f"{year:04d}-12-31" if year is not None else None
+
+    def _profile_release_year_to(
+        self,
+        profile: dict[str, Any],
+    ) -> int | None:
+        """Resolve the upper release year, including legacy profiles."""
+        return self._parse_optional_year(
             profile.get("release_year_to")
             or profile.get("release_date_lte")
         )
-        return f"{year:04d}-12-31" if year is not None else None
 
     async def _build_discovery_profiles(
         self,
@@ -1295,7 +1371,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if award_source != AWARD_SOURCE_NONE:
                 items = await self._award_profile_candidates(
                     profile,
-                    resolution_limit=max(limit * 4, 50),
+                    resolution_batch_size=max(limit * 4, 50),
                 )
             elif (
                 award == PROFILE_AWARD_OSCARS_BEST_PICTURE_2026
@@ -1548,7 +1624,11 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 else []
             )
 
-            oscar_movies = await self._resolve_oscar_best_picture()
+            oscar_movies = (
+                await self._resolve_oscar_best_picture()
+                if self._needs_legacy_oscar_movies()
+                else []
+            )
             oscar_movies = [
                 movie
                 for movie in oscar_movies

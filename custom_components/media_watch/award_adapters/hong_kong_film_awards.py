@@ -251,7 +251,7 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                         "title": title_candidates[-1],
                         "title_candidates": title_candidates,
                         "stable_key": (
-                            f"{award_year}:{category}:"
+                            f"{award_year}:"
                             f"{title_candidates[-1].casefold()}"
                         ),
                         "winner": False,
@@ -384,7 +384,7 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
                             "title": title_candidates[-1],
                             "title_candidates": title_candidates,
                             "stable_key": (
-                                f"{award_year}:{category}:"
+                                f"{award_year}:"
                                 f"{title_candidates[-1].casefold()}"
                             ),
                             "winner": False,
