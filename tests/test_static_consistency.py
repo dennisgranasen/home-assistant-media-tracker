@@ -121,6 +121,28 @@ def test_startup_deferred_work_uses_background_tasks() -> None:
         name: "async_create_background_task" for name in expected
     }
 
+    setup_tree = ast.parse(
+        (
+            ROOT / "custom_components/media_watch/__init__.py"
+        ).read_text(encoding="utf-8")
+    )
+    deferred_call = next(
+        call
+        for call in ast.walk(setup_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "async_create_background_task"
+        and any(
+            isinstance(argument, ast.Constant)
+            and argument.value == "media_watch_deferred_discovery"
+            for argument in call.args
+        )
+    )
+    refresh_call = deferred_call.args[0]
+    assert isinstance(refresh_call, ast.Call)
+    assert isinstance(refresh_call.func, ast.Attribute)
+    assert refresh_call.func.attr == "async_refresh"
+
 
 def test_config_entry_unload_callbacks_do_not_return_task_cancel_bool() -> None:
     """Task.cancel returns bool and cannot be an async_on_unload job."""

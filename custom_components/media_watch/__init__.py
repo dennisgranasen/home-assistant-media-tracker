@@ -162,7 +162,7 @@ async def async_setup_entry(
     # entity registration is not held up by external discovery/award sites.
     # Populate those feeds immediately after the entities are available.
     deferred_refresh = hass.async_create_background_task(
-        coordinator.async_request_refresh(),
+        coordinator.async_refresh(),
         "media_watch_deferred_discovery",
     )
     coordinator._deferred_refresh_task = deferred_refresh
