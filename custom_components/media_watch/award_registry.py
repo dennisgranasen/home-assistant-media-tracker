@@ -47,10 +47,22 @@ def create_adapter(hass, source: str) -> AwardAdapter | None:
     return cache[source]
 
 
-async def async_categories(hass, source: str, media_type: str) -> list[dict[str, str]]:
+async def async_categories(
+    hass,
+    source: str,
+    media_type: str,
+) -> list[dict[str, str]]:
+    """Return award categories without allowing a provider failure to crash options."""
     if source == AWARD_SOURCE_NONE:
         return []
+
     adapter = create_adapter(hass, source)
     if adapter is None or media_type not in adapter.info.media_types:
         return []
-    return await adapter.async_categories(media_type)
+
+    try:
+        categories = await adapter.async_categories(media_type)
+    except Exception:
+        return [{"value": "all", "label": "All categories"}]
+
+    return categories or [{"value": "all", "label": "All categories"}]

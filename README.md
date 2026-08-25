@@ -596,3 +596,30 @@ cross-media assumptions such as movie `Science Fiction` (878) versus TV
 
 Legacy profiles that contain comma-separated genre IDs remain compatible and
 are normalized into the new selector values when edited.
+
+
+### v0.16.2 genre selector fix
+
+Fixed an options-flow crash introduced in v0.16.1. Home Assistant selector
+options are mapping-like values, so genre option IDs must be read using
+`option["value"]` rather than `option.value`.
+
+This affected opening the ordinary discovery-filter step after configuring
+award filters.
+
+
+### v0.16.3 HKFAA configuration fix
+
+Hardened the Hong Kong Film Awards adapter and award profile configuration:
+
+- fixes parsing of bilingual HKFAA category headings by preserving table-cell
+  line boundaries
+- sends normal browser-style request headers to official award sites
+- uses the HKFAA built-in category catalogue if the current archive page is
+  unavailable or cannot be parsed
+- prevents an award provider/category lookup failure from crashing the Home
+  Assistant options flow
+- keeps "All categories" available as a safe fallback
+
+This specifically fixes failures while creating a Hong Kong Film Awards
+discovery profile.

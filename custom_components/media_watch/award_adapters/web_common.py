@@ -12,6 +12,18 @@ from typing import Any
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 
+AWARD_HTTP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Home Assistant) "
+        "AppleWebKit/537.36 Chrome/149 Safari/537.36 "
+        "MediaWatch/0.16"
+    ),
+    "Accept": "text/html,application/xhtml+xml",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+
+
 class _BlockTextParser(HTMLParser):
     BLOCKS = {"h1", "h2", "h3", "h4", "h5", "p", "li", "article", "section", "div", "br"}
 
@@ -40,7 +52,7 @@ async def fetch_lines(hass, url: str) -> list[str]:
     if url in cache:
         return list(cache[url])
     session = async_get_clientsession(hass)
-    async with session.get(url, timeout=45) as response:
+    async with session.get(url, timeout=45, headers=AWARD_HTTP_HEADERS) as response:
         response.raise_for_status()
         text = await response.text()
     parser = _BlockTextParser()
@@ -169,7 +181,7 @@ async def fetch_table_rows(hass, url: str) -> list[list[str]]:
         return [list(row) for row in cache[key]]
 
     session = async_get_clientsession(hass)
-    async with session.get(url, timeout=45) as response:
+    async with session.get(url, timeout=45, headers=AWARD_HTTP_HEADERS) as response:
         response.raise_for_status()
         text = await response.text()
 

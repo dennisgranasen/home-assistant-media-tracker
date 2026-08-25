@@ -51,7 +51,7 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         "Best Cinematography",
         "Best Film Editing",
         "Best Art Direction",
-        "Best Costume & Make Up Design",
+        "Best Costume & Makeup Design",
         "Best Action Choreography",
         "Best Original Film Score",
         "Best Original Film Song",
@@ -97,7 +97,7 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
             "Best Film Editing",
             "Best Art Direction",
             "Best Costume & Makeup Design",
-            "Best Costume & Make Up Design",
+            "Best Costume & Makeup Design",
             "Best Action Choreography",
             "Best Original Film Score",
             "Best Original Film Song",
@@ -184,73 +184,120 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         rows: list[list[str]],
         ceremony: int,
     ) -> list[dict[str, Any]]:
-        """Parse official nominee/awardee table rows when table structure exists."""
+        """Parse HKFAA nominee/awardee tables.
+
+        HKFAA mixes Chinese and English text inside the same table cell. Keep
+        the original cell line boundaries while detecting category headings;
+        flattening them first makes values such as "最佳電影\\nBest Film"
+        impossible to recognize reliably.
+        """
         records: list[dict[str, Any]] = []
         award_year = cls._ceremony_year(ceremony)
         category: str | None = None
 
-        for row in rows:
-            cells = [re.sub(r"\s+", " ", c.replace("\n", " ")).strip() for c in row]
-            if not cells:
+        for raw_row in rows:
+            if not raw_row:
                 continue
 
-            # Category rows often include Chinese and English headings in one
-            # or adjacent cells.
-            for cell in cells:
+            cell_lines: list[list[str]] = []
+            flat_cells: list[str] = []
+            for raw_cell in raw_row:
                 lines = [
-                    re.sub(r"\s+", " ", x).strip()
-                    for x in re.split(r"[\n\r]+", cell)
-                    if x.strip()
+                    re.sub(r"\s+", " ", part).strip()
+                    for part in re.split(r"[\n\r]+", raw_cell)
+                    if re.sub(r"\s+", " ", part).strip()
                 ]
-                for value in lines + [cell]:
+                cell_lines.append(lines)
+                flat_cells.append(" ".join(lines).strip())
+
+            # Find an English category heading either on its own line or as
+            # the English tail of a bilingual heading.
+            detected_category: str | None = None
+            for lines in cell_lines:
+                for value in lines:
                     if cls._looks_like_english_category(value):
-                        category = value
+                        detected_category = value
                         break
-                if category:
+                if detected_category:
                     break
+
+            if detected_category:
+                category = detected_category
 
             if not category:
                 continue
 
-            # HKFAA tables conventionally have nominee/candidate and awardee
-            # columns. Numbered cells are nominee entries.
+            # Numbered entries are nominees/candidates.
             nominee_cells = [
-                c for c in cells if re.match(r"^\s*\d+\.", c)
+                cell
+                for cell in flat_cells
+                if re.match(r"^\s*\d+\.", cell)
             ]
-            if nominee_cells:
-                for nominee in nominee_cells:
-                    title_candidates = cls._title_candidates(
-                        nominee, category
-                    )
-                    if not title_candidates:
-                        continue
-                    records.append(
-                        {
-                            "media_type": "movie",
-                            "award_year": award_year,
-                            "ceremony": ceremony,
-                            "category": category,
-                            "title": title_candidates[-1],
-                            "title_candidates": title_candidates,
-                            "stable_key": (
-                                f"{award_year}:{category}:"
-                                f"{title_candidates[-1].casefold()}"
-                            ),
-                            "winner": False,
-                            "_nominee_text": nominee,
-                        }
-                    )
 
-                # Any non-numbered cell after nominees can be the awardee.
-                winner_text = " ".join(
-                    c
-                    for c in cells
-                    if c
-                    and not re.match(r"^\s*\d+\.", c)
-                    and not cls._looks_like_english_category(c)
+            for nominee in nominee_cells:
+                title_candidates = cls._title_candidates(
+                    nominee,
+                    category,
                 )
-                if winner_text:
-                    cls._mark_winner(records, category, award_year, winner_text)
+                if not title_candidates:
+                    continue
+
+                records.append(
+                    {
+                        "media_type": "movie",
+                        "award_year": award_year,
+                        "ceremony": ceremony,
+                        "category": category,
+                        "title": title_candidates[-1],
+                        "title_candidates": title_candidates,
+                        "stable_key": (
+                            f"{award_year}:{category}:"
+                            f"{title_candidates[-1].casefold()}"
+                        ),
+                        "winner": False,
+                        "_nominee_text": nominee,
+                    }
+                )
+
+            if not nominee_cells:
+                continue
+
+            # The awardee is normally in a separate non-numbered table cell.
+            winner_parts: list[str] = []
+            for lines, flat in zip(cell_lines, flat_cells):
+                if not flat:
+                    continue
+                if re.match(r"^\s*\d+\.", flat):
+                    continue
+                if any(
+                    cls._looks_like_english_category(value)
+                    for value in lines
+                ):
+                    continue
+
+                # Skip table headers.
+                if flat.casefold() in {
+                    "nominee",
+                    "nominees",
+                    "candidate",
+                    "candidates",
+                    "awardee",
+                    "winner",
+                    "得獎者",
+                    "候選者",
+                    "獎項",
+                }:
+                    continue
+
+                winner_parts.extend(lines)
+
+            if winner_parts:
+                cls._mark_winner(
+                    records,
+                    category,
+                    award_year,
+                    " ".join(winner_parts),
+                )
 
         return records
 
@@ -388,11 +435,22 @@ class HongKongFilmAwardsAdapter(AwardAdapter):
         if media_type != "movie":
             return []
 
-        # Use the latest official nominee page for the current category set.
-        records = await self._load_ceremony(self.LATEST_CEREMONY)
-        categories = sorted(
-            {r["category"] for r in records if r.get("category")}
-        )
+        # Prefer the current official archive, but profile configuration must
+        # remain usable if HKFAA is temporarily unavailable or changes markup.
+        try:
+            records = await self._load_ceremony(
+                self.LATEST_CEREMONY
+            )
+            categories = sorted(
+                {
+                    str(record["category"])
+                    for record in records
+                    if record.get("category")
+                }
+            )
+        except Exception:
+            categories = []
+
         if not categories:
             categories = list(self.DEFAULT_CATEGORIES)
 

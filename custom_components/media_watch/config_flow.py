@@ -934,7 +934,7 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
         media_type = str(d("media_type", "movie"))
         genre_options = await self._profile_genre_options(media_type)
         valid_genre_ids = {
-            option.value
+            str(option["value"])
             for option in genre_options
         }
 
