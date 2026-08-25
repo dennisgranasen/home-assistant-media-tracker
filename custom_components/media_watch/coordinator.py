@@ -878,8 +878,11 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         items: list[dict[str, Any]],
         profile: dict[str, Any],
         media_type: str,
+        *,
+        excluded_ids: set[int] | None = None,
     ) -> list[dict[str, Any]]:
         """Apply filters needed after enrichment/recommendation/award lookup."""
+        blocked_ids = excluded_ids or set()
         include = set(self._parse_genre_ids(profile.get("include_genres", "")))
         exclude = set(self._parse_genre_ids(profile.get("exclude_genres", "")))
         match = str(profile.get("genre_match", "any")).lower()
@@ -891,9 +894,12 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         result: list[dict[str, Any]] = []
         for item in items:
-            if self.store.is_watched(media_type, int(item["id"])):
+            tmdb_id = int(item["id"])
+            if tmdb_id in blocked_ids:
                 continue
-            if self.store.is_dismissed(media_type, int(item["id"])):
+            if self.store.is_watched(media_type, tmdb_id):
+                continue
+            if self.store.is_dismissed(media_type, tmdb_id):
                 continue
             if provider_scope == "my" and not item.get(
                 "available_on_my_services", False
@@ -1055,6 +1061,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         *,
         target_limit: int,
         resolution_batch_size: int,
+        excluded_ids: set[int] | None = None,
     ) -> list[dict[str, Any]]:
         """Build an award candidate set from one or all adapters."""
         source = str(
@@ -1399,6 +1406,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 status_filtered,
                 profile,
                 media_type,
+                excluded_ids=excluded_ids,
             )
             exhaustive_any_no_win = (
                 source == AWARD_SOURCE_ANY
@@ -1579,6 +1587,11 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     profile,
                     target_limit=limit,
                     resolution_batch_size=4,
+                    excluded_ids=(
+                        watchlist_ids
+                        if media_type == "movie"
+                        else watchlist_tv_ids
+                    ),
                 )
             elif (
                 award == PROFILE_AWARD_OSCARS_BEST_PICTURE_2026
@@ -1677,7 +1690,14 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     )
 
             items = self._profile_post_filter(
-                items, profile, media_type
+                items,
+                profile,
+                media_type,
+                excluded_ids=(
+                    watchlist_ids
+                    if media_type == "movie"
+                    else watchlist_tv_ids
+                ),
             )[:limit]
 
             output[profile_id] = {
@@ -1842,6 +1862,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if not self.store.is_watched(
                     "movie", int(movie["id"])
                 )
+                and int(movie["id"]) not in watchlist_ids
                 and not self.store.is_dismissed(
                     "movie", int(movie["id"])
                 )

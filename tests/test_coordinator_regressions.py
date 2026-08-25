@@ -58,6 +58,28 @@ def test_legacy_release_dates_apply_to_post_filter() -> None:
     assert [item["id"] for item in result] == [2, 3]
 
 
+def test_profile_post_filter_excludes_watchlist_watched_and_dismissed() -> None:
+    class Store:
+        def is_watched(self, _media_type: str, tmdb_id: int) -> bool:
+            return tmdb_id == 2
+
+        def is_dismissed(self, _media_type: str, tmdb_id: int) -> bool:
+            return tmdb_id == 3
+
+    coordinator = _coordinator()
+    coordinator.store = Store()
+    items = [{"id": tmdb_id} for tmdb_id in range(1, 6)]
+
+    result = coordinator._profile_post_filter(
+        items,
+        {},
+        "movie",
+        excluded_ids={1},
+    )
+
+    assert [item["id"] for item in result] == [4, 5]
+
+
 def test_web_awards_merge_categories_but_separate_same_title_by_year() -> None:
     records = [
         {
@@ -535,6 +557,7 @@ def test_award_resolution_continues_until_filters_have_enough_candidates(
             },
             target_limit=1,
             resolution_batch_size=2,
+            excluded_ids={2},
         )
     )
 
@@ -542,8 +565,9 @@ def test_award_resolution_continues_until_filters_have_enough_candidates(
         result,
         {"provider_scope": "my"},
         "movie",
+        excluded_ids={2},
     )
-    assert [item["id"] for item in filtered] == [2, 3]
+    assert [item["id"] for item in filtered] == [3]
     assert resolved_ids == [0, 1, 2, 3]
 
 

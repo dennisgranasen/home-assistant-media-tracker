@@ -331,7 +331,8 @@ award authority; TMDB is used to resolve localized media metadata and Swedish
 streaming availability.
 
 Watched and dismissed films are excluded. Movies already on the TMDB watchlist
-remain visible and carry `on_watchlist: true`.
+are also excluded from award/discovery queues and remain available through the
+dedicated watchlist feed.
 
 
 ### v0.11.0 discovery profiles
