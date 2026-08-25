@@ -11,6 +11,7 @@ from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import slugify
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
@@ -891,6 +892,29 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
         if current_sort not in valid_sorts:
             current_sort = "popularity.desc"
 
+        current_year = dt_util.now().year
+
+        def legacy_year(new_key: str, old_key: str) -> int | None:
+            value = d(new_key, None)
+            if value in (None, ""):
+                value = d(old_key, None)
+            if value in (None, ""):
+                return None
+            text = str(value).strip()
+            if len(text) >= 4 and text[:4].isdigit():
+                return int(text[:4])
+            try:
+                return int(text)
+            except ValueError:
+                return None
+
+        release_year_from = legacy_year(
+            "release_year_from", "release_date_gte"
+        )
+        release_year_to = legacy_year(
+            "release_year_to", "release_date_lte"
+        )
+
         return self.async_show_form(
             step_id="profile_filters",
             data_schema=vol.Schema(
@@ -974,13 +998,38 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                         )
                     ),
                     vol.Optional(
-                        "release_date_gte",
-                        default=d("release_date_gte", ""),
-                    ): TextSelector(TextSelectorConfig()),
+                        "release_year_from",
+                        default=release_year_from,
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1900,
+                            max=current_year,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
                     vol.Optional(
-                        "release_date_lte",
-                        default=d("release_date_lte", ""),
-                    ): TextSelector(TextSelectorConfig()),
+                        "release_year_to",
+                        default=release_year_to,
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1900,
+                            max=current_year,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        "release_max_age_years",
+                        default=d("release_max_age_years", None),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=0,
+                            max=50,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
                     vol.Required(
                         "sort_by",
                         default=current_sort,
@@ -1062,12 +1111,29 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                 ]
 
         for key in (
-            "release_date_gte",
-            "release_date_lte",
+            "release_year_from",
+            "release_year_to",
+            "release_max_age_years",
             "award_year_from",
             "award_year_to",
         ):
-            profile[key] = str(profile.get(key, "")).strip()
+            value = profile.get(key)
+            if value in (None, ""):
+                profile[key] = ""
+                continue
+
+            text = str(value).strip()
+            if key.startswith("release_year") and len(text) >= 4:
+                text = text[:4]
+
+            try:
+                profile[key] = int(text)
+            except ValueError:
+                profile[key] = ""
+
+        # Remove obsolete date-based discovery fields from edited profiles.
+        profile.pop("release_date_gte", None)
+        profile.pop("release_date_lte", None)
 
         updated = [
             item

@@ -89,13 +89,14 @@
           "include_genres": "Inkludera genrer",
           "exclude_genres": "Exkludera genrer",
           "genre_match": "Genrematchning",
-          "release_date_gte": "Utgiven tidigast",
-          "release_date_lte": "Utgiven senast",
           "sort_by": "Sortering",
           "max_pages": "TMDB-sidor",
-          "limit": "Storlek på feed"
+          "limit": "Storlek på feed",
+          "release_year_from": "Utgivningsår från",
+          "release_year_to": "Utgivningsår till",
+          "release_max_age_years": "Max ålder i år (rullande)"
         },
-        "description": "Ställ in betyg, antal röster, genrer, providers, releasedatum, sortering och köstorlek för just den här profilen."
+        "description": "Ställ in betyg, röster, genrer, providers och utgivningsår. Använd 'Max ålder i år' för ett rullande intervall; 3 betyder innevarande år och de tre föregående åren."
       }
     },
     "error": {

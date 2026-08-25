@@ -9,6 +9,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
@@ -840,8 +841,22 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         provider_scope = str(profile.get("provider_scope", "all")).lower()
         min_rating = float(profile.get("min_rating", 0) or 0)
         min_votes = int(profile.get("min_votes", 0) or 0)
-        date_gte = str(profile.get("release_date_gte") or "").strip()
-        date_lte = str(profile.get("release_date_lte") or "").strip()
+        release_year_from = self._parse_optional_year(
+            profile.get("release_year_from")
+        )
+        release_year_to = self._parse_optional_year(
+            profile.get("release_year_to")
+        )
+        max_age_years = self._parse_optional_int(
+            profile.get("release_max_age_years")
+        )
+
+        if max_age_years is not None and max_age_years >= 0:
+            rolling_from = dt_util.now().year - max_age_years
+            release_year_from = max(
+                release_year_from or rolling_from,
+                rolling_from,
+            )
 
         result: list[dict[str, Any]] = []
         for item in items:
@@ -873,9 +888,14 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     continue
 
             item_date = self._profile_date(item, media_type)
-            if date_gte and (not item_date or item_date < date_gte):
+            item_year = self._year_from_date(item_date)
+            if release_year_from is not None and (
+                item_year is None or item_year < release_year_from
+            ):
                 continue
-            if date_lte and (not item_date or item_date > date_lte):
+            if release_year_to is not None and (
+                item_year is None or item_year > release_year_to
+            ):
                 continue
 
             result.append(item)
@@ -904,6 +924,13 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         award_source: str,
     ) -> dict[str, Any] | None:
         """Resolve a normalized award title to TMDB and enrich it."""
+        if media_type not in {"movie", "tv"}:
+            _LOGGER.error(
+                "Invalid award media type %r for source %r",
+                media_type,
+                award_source,
+            )
+            return None
         cache_key = f"{award_source}:{media_type}:{award_item.get('imdb_id') or award_item.get('tmdb_id') or award_item.get('title')}"
         if cache_key in self._award_tmdb_cache:
             cached = self._award_tmdb_cache[cache_key]
@@ -1120,7 +1147,11 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         resolved = await asyncio.gather(
             *(
-                self._resolve_award_title(item, source, media_type)
+                self._resolve_award_title(
+                    item,
+                    media_type=media_type,
+                    award_source=source,
+                )
                 for item in award_titles
             )
         )
@@ -1222,13 +1253,11 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         include_genres=include_genres,
                         exclude_genres=exclude_genres,
                         genre_match=genre_match,
-                        release_date_gte=(
-                            str(profile.get("release_date_gte") or "").strip()
-                            or None
+                        release_date_gte=self._profile_release_date_gte(
+                            profile
                         ),
-                        release_date_lte=(
-                            str(profile.get("release_date_lte") or "").strip()
-                            or None
+                        release_date_lte=self._profile_release_date_lte(
+                            profile
                         ),
                         sort_by=str(
                             profile.get("sort_by", "popularity.desc")
@@ -1262,13 +1291,11 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         include_genres=include_genres,
                         exclude_genres=exclude_genres,
                         genre_match=genre_match,
-                        release_date_gte=(
-                            str(profile.get("release_date_gte") or "").strip()
-                            or None
+                        release_date_gte=self._profile_release_date_gte(
+                            profile
                         ),
-                        release_date_lte=(
-                            str(profile.get("release_date_lte") or "").strip()
-                            or None
+                        release_date_lte=self._profile_release_date_lte(
+                            profile
                         ),
                         sort_by=str(
                             profile.get("sort_by", "popularity.desc")

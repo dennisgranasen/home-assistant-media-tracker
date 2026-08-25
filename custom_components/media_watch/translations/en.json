@@ -89,13 +89,14 @@
           "include_genres": "Include genres",
           "exclude_genres": "Exclude genres",
           "genre_match": "Genre matching",
-          "release_date_gte": "Released on/after",
-          "release_date_lte": "Released on/before",
           "sort_by": "Sort",
           "max_pages": "TMDB pages",
-          "limit": "Feed size"
+          "limit": "Feed size",
+          "release_year_from": "Release year from",
+          "release_year_to": "Release year to",
+          "release_max_age_years": "Maximum age in years (rolling)"
         },
-        "description": "Set rating, vote count, genres, providers, release dates, sorting and queue size for this profile."
+        "description": "Set rating, votes, genres, providers and release-year filters. Use 'Maximum age in years' for a rolling window, e.g. 3 means titles from the current year and previous three years."
       }
     },
     "error": {

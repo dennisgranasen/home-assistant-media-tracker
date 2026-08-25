@@ -663,3 +663,78 @@ TMDB language/region, selected streaming providers and episode-calendar
 behavior.
 
 Existing profile entities and their stable unique IDs are unchanged.
+
+
+### v0.17.1 year-based release filters
+
+Discovery profiles now use release years rather than full dates.
+
+Fields:
+
+- **Release year from** — integer, 1900 through the current year
+- **Release year to** — integer, 1900 through the current year
+- **Maximum age in years (rolling)** — optional dynamic lower bound
+
+Example:
+
+```text
+Maximum age in years: 3
+```
+
+In 2026 this means release year >= 2023. In 2027 the same profile
+automatically means release year >= 2024.
+
+If both an absolute `Release year from` and a rolling maximum age are set, the
+stricter (newer) lower bound wins.
+
+TMDB still receives proper API date bounds internally (`YYYY-01-01` and
+`YYYY-12-31`); the user-facing profile is year-based.
+
+Legacy `YYYY-MM-DD` profile values are read safely by extracting their year
+and are removed when the profile is next edited.
+
+
+### v0.17.2 award TMDB resolution fix
+
+Fixed empty award-backed discovery queues.
+
+The generic award resolver called `_resolve_award_title()` with `source` and
+`media_type` in the wrong order. For an Oscars movie profile this effectively
+became:
+
+```text
+media_type = "oscars"
+award_source = "movie"
+```
+
+so IMDb IDs were resolved against TMDB TV results instead of movie results and
+valid films disappeared from the queue.
+
+The argument order is corrected and the resolver now rejects invalid media
+types explicitly instead of silently producing an empty feed.
+
+
+### v0.17.3 award-provider pipeline hardening
+
+All award providers share the same award-to-TMDB resolver. The argument-order
+bug fixed in v0.17.2 therefore affected every registered award source, not just
+Oscars.
+
+The resolver is now called with explicit keyword arguments:
+
+```python
+_resolve_award_title(
+    item,
+    media_type=media_type,
+    award_source=source,
+)
+```
+
+This prevents future positional swaps between media type and award source.
+
+The registered adapter set is statically checked during development:
+Oscars, Guldbaggen, BAFTA Film, BAFTA Television, Golden Globes Film,
+Golden Globes Television, Primetime Emmy, Cannes and Hong Kong Film Awards.
+
+Discovery profile sensors also expose award category/status/year diagnostics as
+top-level attributes, making empty award queues easier to debug.

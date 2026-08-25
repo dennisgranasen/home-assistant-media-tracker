@@ -495,6 +495,18 @@ class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
             "award_source": self._profile.get(
                 "award_source", "none"
             ),
+            "award_category": self._profile.get(
+                "award_category", "all"
+            ),
+            "award_status": self._profile.get(
+                "award_status", "any"
+            ),
+            "award_year_from": self._profile.get(
+                "award_year_from", ""
+            ),
+            "award_year_to": self._profile.get(
+                "award_year_to", ""
+            ),
             "profile": dict(self._profile),
         }
 
