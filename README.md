@@ -15,6 +15,8 @@ A HACS-installable Home Assistant custom integration for tracking movies and TV 
   award queues.
 - Build movie or TV discovery queues from an actor's or filmmaker's TMDB
   credits.
+- Combine the visible results from several same-media-type profiles into one
+  deduplicated feed with its own filters, sorting and limit.
 - Filter profiles by providers, rating, votes, genres, release year, rolling
   age, sort order and queue size.
 - Query one award organization or combine all compatible organizations with
@@ -65,7 +67,8 @@ global. They belong to each discovery profile.
 ### Discovery profiles
 
 Under **Configure → Discovery profiles**, choose **Add profile**, **Edit** or
-**Delete**. Creating or editing a profile has four stages:
+**Delete**. Creating or editing a profile has up to four stages; person and
+combined profiles skip the award stages:
 
 1. Name, movie/TV media type and source: general discovery, personalized, a
    person's filmography or combined profiles.
@@ -265,6 +268,8 @@ Movie items can contain:
 - local state: `watched` and, where relevant, `dismissed`
 - awards: `award`, optional `awards`, and `award_summary`
 - person profiles: `person` with the selected person and roles for that title
+- combined profiles: `source_profiles` with every contributing profile and
+  `people` with all matching people when person profiles contributed the item
 
 For a Swedish-language configuration, a Swedish original such as
 `Utvandrarna` remains the primary `title`; `The Emigrants` is exposed as
@@ -312,6 +317,8 @@ The `profiles` attribute contains each profile's status, last attempt and
 success timestamps, runtime, error text, requested limit and candidate counts
 at source, after initial exclusions, after all filters and in the final feed.
 `shortfall` shows how many items were missing from the requested queue size.
+Combined-profile diagnostics also expose `source_profile_ids` and
+`missing_source_profile_ids`, making deleted or unavailable sources visible.
 Each discovery-profile sensor also exposes its own current `diagnostics`
 attribute.
 
