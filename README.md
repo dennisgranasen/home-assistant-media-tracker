@@ -216,6 +216,7 @@ Available actions:
 - `media_watch.mark_episode_unwatched`
 - `media_watch.mark_seasons_watched`
 - `media_watch.mark_seasons_unwatched`
+- `media_watch.mark_released_episodes_watched`
 - `media_watch.upcoming_episodes` (returns response data)
 - `media_watch.refresh`
 
