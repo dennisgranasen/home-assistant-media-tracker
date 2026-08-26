@@ -497,7 +497,7 @@ updatable through HACS.
 ## Media Tracker Card
 
 Use `sensor.media_watch_episodes`, `sensor.media_watch_watchlist` and the
-individual discovery-profile sensors as companion `media-tracker-card` feeds.
+individual discovery-profile sensors as companion [media-tracker-card](https://github.com/dennisgranasen/media-tracker-card) feeds.
 All expose `items` with provider IDs/logo paths and the action parameters
 needed by the card.
 
