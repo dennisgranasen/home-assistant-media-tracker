@@ -252,7 +252,7 @@ class TMDBApi:
             f"/movie/{tmdb_id}",
             params={
                 "language": language,
-                "append_to_response": "credits,external_ids",
+                "append_to_response": "credits,external_ids,release_dates",
             },
             include_session=False,
         )
@@ -266,6 +266,37 @@ class TMDBApi:
         return await self._request(
             "GET",
             f"/person/{person_id}",
+            params={"language": language},
+            include_session=False,
+        )
+
+    async def search_people(
+        self,
+        query: str,
+        language: str,
+    ) -> list[dict[str, Any]]:
+        """Search TMDB people for discovery-profile configuration."""
+        data = await self._request(
+            "GET",
+            "/search/person",
+            params={
+                "query": query,
+                "language": language,
+                "include_adult": "false",
+            },
+            include_session=False,
+        )
+        return data.get("results", [])
+
+    async def get_person_combined_credits(
+        self,
+        person_id: int,
+        language: str,
+    ) -> dict[str, Any]:
+        """Return movie and TV credits for one TMDB person."""
+        return await self._request(
+            "GET",
+            f"/person/{person_id}/combined_credits",
             params={"language": language},
             include_session=False,
         )

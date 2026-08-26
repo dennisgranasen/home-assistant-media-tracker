@@ -265,6 +265,8 @@ def test_config_profile_fields_match_coordinator_expectations() -> None:
         "name",
         "media_type",
         "source",
+        "person_id",
+        "person_name",
         "award_source",
         "award_preset",
         "award_category",

@@ -23,6 +23,7 @@ class MediaWatchStore:
             "dismissed_movies": [],
             "dismissed_tv": [],
             "tv_progress": {},
+            "watchlist_snapshots": {},
         }
 
     async def async_load(self) -> None:
@@ -44,8 +45,31 @@ class MediaWatchStore:
         if isinstance(progress, dict):
             self._data["tv_progress"] = progress
 
+        snapshots = saved.get("watchlist_snapshots")
+        if isinstance(snapshots, dict):
+            self._data["watchlist_snapshots"] = snapshots
+
     async def async_save(self) -> None:
         await self._store.async_save(self._data)
+
+    @property
+    def watchlist_snapshots(self) -> dict[str, dict[str, Any]]:
+        """Return a copy of persisted movie release/provider snapshots."""
+        return {
+            str(key): dict(value)
+            for key, value in self._data["watchlist_snapshots"].items()
+            if isinstance(value, dict)
+        }
+
+    async def set_watchlist_snapshots(
+        self,
+        snapshots: dict[str, dict[str, Any]],
+    ) -> None:
+        """Persist the current Watchlist snapshot as one atomic update."""
+        self._data["watchlist_snapshots"] = {
+            str(key): dict(value) for key, value in snapshots.items()
+        }
+        await self.async_save()
 
     @staticmethod
     def _key(media_type: str, prefix: str) -> str:

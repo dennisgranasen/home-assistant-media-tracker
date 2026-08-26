@@ -13,6 +13,8 @@ A HACS-installable Home Assistant custom integration for tracking movies and TV 
 - Create any number of movie or TV discovery profiles, each with its own sensor.
 - Build general TMDB discovery, personalized recommendation and historical
   award queues.
+- Build movie or TV discovery queues from an actor's or filmmaker's TMDB
+  credits.
 - Filter profiles by providers, rating, votes, genres, release year, rolling
   age, sort order and queue size.
 - Query one award organization or combine all compatible organizations with
@@ -21,6 +23,8 @@ A HACS-installable Home Assistant custom integration for tracking movies and TV 
   availability, award facts and UI-ready badges in feed attributes.
 - Start core entities before slow discovery/award work and update discovery
   profiles independently in the background.
+- Expose queue diagnostics and fire automation events when Watchlist release
+  dates or selected-provider availability changes.
 
 ## Installation with HACS
 
@@ -63,7 +67,8 @@ global. They belong to each discovery profile.
 Under **Configure → Discovery profiles**, choose **Add profile**, **Edit** or
 **Delete**. Creating or editing a profile has four stages:
 
-1. Name, movie/TV media type and source: general discovery or personalized.
+1. Name, movie/TV media type and source: general discovery, personalized or a
+   person's filmography.
 2. Optional award organization.
 3. Award preset, category, status and award-year range when awards are enabled.
 4. Provider, watched, rating, genre, release-year, sorting, page-depth and
@@ -89,6 +94,12 @@ Profile filters:
 - **Sort order**: popularity, rating, votes, newest or oldest.
 - **TMDB pages**: 1–20 source pages.
 - **Limit**: 1–200 visible items.
+
+For **Person filmography**, search TMDB by name and select the intended person
+using their department and known works. Cast and crew credits are combined and
+deduplicated, so the same title is not repeated when a person had several
+roles. Every ordinary profile filter still applies. Items expose `person` with
+the TMDB person ID, name and credited roles.
 
 Award years, release years and maximum age use numeric selectors. Empty values
 are genuinely optional and remain valid when an existing profile is edited.
@@ -158,6 +169,8 @@ Every entry creates these core sensors:
 - `sensor.media_watch_episodes_next_30_days`
 - `sensor.media_watch_episodes` (`items` feed)
 - `sensor.media_watch_watchlist` (`items` feed)
+- `sensor.media_watch_queue_diagnostics`
+- `sensor.media_watch_release_updates`
 - `sensor.media_watch_upcoming_media_card` (compatibility feed)
 
 In addition, every discovery profile creates one `items` feed sensor. There is
@@ -232,6 +245,7 @@ Movie items can contain:
 - titles: localized `title`, fallback-language `fallback_title`, and TMDB
   `original_title`
 - release and popularity: `release_date`, `vote_average`, `vote_count`
+- release monitoring: `digital_release_date`
 - descriptive metadata: `overview`, `tagline`, `runtime`, genres, production
   countries and collection/franchise
 - credits: `directors`, `writers` and the first three credited cast members
@@ -240,6 +254,7 @@ Movie items can contain:
   `available_on_my_services`
 - local state: `watched` and, where relevant, `dismissed`
 - awards: `award`, optional `awards`, and `award_summary`
+- person profiles: `person` with the selected person and roles for that title
 
 For a Swedish-language configuration, a Swedish original such as
 `Utvandrarna` remains the primary `title`; `The Emigrants` is exposed as
@@ -272,6 +287,60 @@ resolved through cached English TMDB aliases when available.
   They are cleared when the last Media Watch entry unloads.
 - Watchlist award enrichment runs in the background. Successful award sources
   are published even if another adapter fails and is scheduled for retry.
+
+## Queue diagnostics
+
+After a successful integration setup, `sensor.media_watch_queue_diagnostics`
+stays available even when a later main TMDB refresh fails. Its state is one of:
+
+- `healthy`: core refresh and every profile succeeded.
+- `updating`: at least one profile is currently being rebuilt.
+- `pending`: configured profiles have not completed their first build.
+- `degraded`: the core refresh, a profile or a Watchlist award source failed.
+
+The `profiles` attribute contains each profile's status, last attempt and
+success timestamps, runtime, error text, requested limit and candidate counts
+at source, after initial exclusions, after all filters and in the final feed.
+`shortfall` shows how many items were missing from the requested queue size.
+Each discovery-profile sensor also exposes its own current `diagnostics`
+attribute.
+
+For a compact dashboard, show the diagnostics sensor in a standard Entities
+card and use a Conditional card for the `degraded` state. The full `profiles`
+attribute is primarily intended for a Markdown diagnostics view or Developer
+Tools rather than a normal media card.
+
+## Watchlist release events
+
+Media Watch stores a baseline for current Watchlist movies. A baseline never
+fires events. Later changes fire `media_watch_release_update` with one of these
+`change_type` values:
+
+- `release_date_announced` or `release_date_changed`
+- `digital_release_date_announced` or `digital_release_date_changed`
+- `provider_added`, limited to the streaming providers selected in Media Watch
+
+The event includes `tmdb_id`, localized `title`, `region`, `detected_at` and
+the changed values or added provider records. Changing the configured region
+or selected provider list resets the relevant comparison without producing a
+false availability event. The latest refresh's changes are also exposed by
+`sensor.media_watch_release_updates`.
+
+Automation example:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: media_watch_release_update
+    event_data:
+      change_type: provider_added
+actions:
+  - action: persistent_notification.create
+    data:
+      title: "{{ trigger.event.data.title }} finns att streama"
+      message: >-
+        {{ trigger.event.data.providers | map(attribute='name') | join(', ') }}
+```
 
 ## Data sources
 

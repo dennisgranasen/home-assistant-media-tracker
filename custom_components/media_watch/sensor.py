@@ -37,6 +37,8 @@ async def async_setup_entry(
             EpisodesNext30DaysSensor(coordinator, entry),
             EpisodesFeedSensor(coordinator, entry),
             MovieWatchlistFeedSensor(coordinator, entry),
+            QueueDiagnosticsSensor(coordinator, entry),
+            ReleaseUpdatesSensor(coordinator, entry),
             UpcomingMediaCardSensor(coordinator, entry),
         ]
     )
@@ -105,6 +107,52 @@ class FollowingTVSensor(MediaWatchSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"shows": self.coordinator.data.get("following_tv", [])}
+
+
+class QueueDiagnosticsSensor(MediaWatchSensor):
+    """Summarize core, profile, and award queue health."""
+
+    _attr_name = "Queue diagnostics"
+    _attr_icon = "mdi:list-status"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_queue_diagnostics"
+
+    @property
+    def native_value(self) -> str:
+        return str(self.coordinator.queue_diagnostics["status"])
+
+    @property
+    def available(self) -> bool:
+        """Keep diagnostics readable when the main coordinator fails."""
+        return True
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self.coordinator.queue_diagnostics
+
+
+class ReleaseUpdatesSensor(MediaWatchSensor):
+    """Expose changes emitted during the most recent Watchlist refresh."""
+
+    _attr_name = "Release updates"
+    _attr_icon = "mdi:movie-check-outline"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_release_updates"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.data.get("release_updates", []))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "event_type": "media_watch_release_update",
+            "updates": self.coordinator.data.get("release_updates", []),
+        }
 
 
 class UpcomingEpisodesSensor(MediaWatchSensor):
@@ -476,6 +524,7 @@ def _movie_feed_item(
         ),
         "watched": item.get("watched", False),
         "recommendation": item.get("recommendation"),
+        "person": item.get("person"),
         "award": item.get("award"),
         "award_summary": item.get("award_summary"),
         "deep_link": (
@@ -523,6 +572,7 @@ def _tv_feed_item(
             "available_on_my_services", False
         ),
         "recommendation": item.get("recommendation"),
+        "person": item.get("person"),
         "deep_link": (
             "https://www.themoviedb.org/tv/"
             f"{item.get('id')}"
@@ -633,6 +683,9 @@ class DiscoveryProfileFeedSensor(_MediaTrackerFeedSensor):
                 "exclude_watched", True
             ),
             "profile": dict(self._profile),
+            "diagnostics": self.coordinator.profile_diagnostics(
+                str(self._profile.get("id") or "")
+            ),
         }
 
 

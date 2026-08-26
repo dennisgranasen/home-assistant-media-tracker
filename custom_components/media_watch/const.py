@@ -91,6 +91,9 @@ CONF_DISCOVERY_PROFILES = "discovery_profiles"
 
 PROFILE_SOURCE_DISCOVER = "discover"
 PROFILE_SOURCE_PERSONALIZED = "personalized"
+PROFILE_SOURCE_PERSON = "person"
+
+EVENT_RELEASE_UPDATE = "media_watch_release_update"
 
 PROFILE_AWARD_NONE = "none"
 PROFILE_AWARD_OSCARS_BEST_PICTURE_2026 = "oscars_best_picture_2026"

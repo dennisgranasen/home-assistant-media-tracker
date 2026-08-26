@@ -60,6 +60,20 @@
           "source": "Discoverykälla"
         }
       },
+      "profile_person": {
+        "title": "Hitta en person",
+        "description": "Sök på TMDB efter en skådespelare, regissör, författare eller annan filmskapare.",
+        "data": {
+          "person_query": "Namn"
+        }
+      },
+      "profile_person_select": {
+        "title": "Välj person",
+        "description": "Välj rätt person. Kända verk visas för att skilja personer med samma namn åt.",
+        "data": {
+          "person_id": "Person"
+        }
+      },
       "profile_awards": {
         "title": "Awards",
         "description": "Steg 2 av 3: begränsa profilen med en award-källa om du vill.",
@@ -99,7 +113,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Kunde inte läsa streamingtjänster från TMDB."
+      "cannot_connect": "Kunde inte läsa data från TMDB.",
+      "person_not_found": "Inga matchande personer hittades på TMDB."
     }
   }
 }

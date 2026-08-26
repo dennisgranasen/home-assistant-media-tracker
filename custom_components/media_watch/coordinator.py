@@ -38,10 +38,12 @@ from .const import (
     DEFAULT_REGION,
     DEFAULT_UPCOMING_LIMIT,
     DOMAIN,
+    EVENT_RELEASE_UPDATE,
     CONF_DISCOVERY_PROFILES,
     UPDATE_INTERVAL,
     OSCAR_BEST_PICTURE_2026,
     PROFILE_SOURCE_DISCOVER,
+    PROFILE_SOURCE_PERSON,
     PROFILE_SOURCE_PERSONALIZED,
     PROFILE_AWARD_NONE,
     PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
@@ -136,9 +138,187 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             str, dict[str, Any]
         ] = {}
         self._discovery_profile_last_scheduled: dict[str, float] = {}
+        self._profile_diagnostics: dict[str, dict[str, Any]] = {}
+        self._last_core_success: str | None = None
+        self._last_core_error: str | None = None
+        self._release_updates: list[dict[str, Any]] = []
 
     def _option(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
+
+    @property
+    def queue_diagnostics(self) -> dict[str, Any]:
+        """Return UI-ready health details for core and profile queues."""
+        diagnostics = getattr(self, "_profile_diagnostics", {})
+        profiles = []
+        for profile in self.discovery_profiles:
+            profile_id = str(profile["id"])
+            profiles.append(
+                {
+                    "id": profile_id,
+                    "name": str(profile.get("name") or profile_id),
+                    "media_type": str(
+                        profile.get("media_type") or "movie"
+                    ),
+                    "source": str(
+                        profile.get("source") or PROFILE_SOURCE_DISCOVER
+                    ),
+                    "status": "pending",
+                    **dict(diagnostics.get(profile_id, {})),
+                }
+            )
+        failed = sum(item.get("status") == "error" for item in profiles)
+        active = sum(
+            item.get("status") in {"scheduled", "updating"}
+            for item in profiles
+        )
+        pending = sum(item.get("status") == "pending" for item in profiles)
+        failed_awards = sorted(
+            getattr(self, "_watchlist_award_failed_sources", set())
+        )
+        if failed or failed_awards or getattr(self, "_last_core_error", None):
+            status = "degraded"
+        elif active:
+            status = "updating"
+        elif pending or getattr(self, "_last_core_success", None) is None:
+            status = "pending"
+        else:
+            status = "healthy"
+        return {
+            "status": status,
+            "last_core_success": getattr(self, "_last_core_success", None),
+            "last_core_error": getattr(self, "_last_core_error", None),
+            "profile_count": len(profiles),
+            "failed_profiles": failed,
+            "active_profiles": active,
+            "failed_award_sources": failed_awards,
+            "profiles": profiles,
+        }
+
+    def profile_diagnostics(self, profile_id: str) -> dict[str, Any]:
+        """Return current diagnostics for one dynamic profile sensor."""
+        return next(
+            (
+                item
+                for item in self.queue_diagnostics["profiles"]
+                if str(item.get("id")) == profile_id
+            ),
+            {"id": profile_id, "status": "pending"},
+        )
+
+    @staticmethod
+    def _digital_release_date(details: dict[str, Any], region: str) -> str | None:
+        """Return the earliest regional TMDB digital release date."""
+        dates = [
+            str(item.get("release_date") or "")[:10]
+            for country in (details.get("release_dates") or {}).get(
+                "results", []
+            )
+            if str(country.get("iso_3166_1") or "").upper()
+            == region.upper()
+            for item in country.get("release_dates", [])
+            if int(item.get("type") or 0) == 4
+            and str(item.get("release_date") or "")[:10]
+        ]
+        return min(dates) if dates else None
+
+    async def _async_track_watchlist_releases(
+        self,
+        movies: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Persist Watchlist state and fire events only for later changes."""
+        previous = self.store.watchlist_snapshots
+        current: dict[str, dict[str, Any]] = {}
+        updates: list[dict[str, Any]] = []
+
+        for movie in movies:
+            tmdb_id = int(movie["id"])
+            key = str(tmdb_id)
+            providers = sorted(
+                [
+                    {
+                        "id": int(provider["id"]),
+                        "name": provider.get("name"),
+                    }
+                    for provider in movie.get("my_provider_details", [])
+                    if isinstance(provider, dict)
+                    and provider.get("id") is not None
+                ],
+                key=lambda provider: provider["id"],
+            )
+            snapshot = {
+                "tmdb_id": tmdb_id,
+                "title": movie.get("title"),
+                "release_date": movie.get("release_date"),
+                "digital_release_date": movie.get("digital_release_date"),
+                "region": self.region,
+                "selected_provider_ids": sorted(self.provider_ids),
+                "providers": providers,
+            }
+            current[key] = snapshot
+            old = previous.get(key)
+            if old is None:
+                continue
+
+            for field, change_type in (
+                ("release_date", "release_date_changed"),
+                ("digital_release_date", "digital_release_date_changed"),
+            ):
+                if field == "digital_release_date" and old.get(
+                    "region"
+                ) != snapshot.get("region"):
+                    continue
+                old_value = old.get(field)
+                new_value = snapshot.get(field)
+                if new_value and old_value != new_value:
+                    if old_value is None:
+                        change_type = change_type.replace(
+                            "_changed", "_announced"
+                        )
+                    updates.append(
+                        {
+                            "change_type": change_type,
+                            "media_type": "movie",
+                            "tmdb_id": tmdb_id,
+                            "title": snapshot["title"],
+                            "old_value": old_value,
+                            "new_value": new_value,
+                        }
+                    )
+
+            old_provider_ids = {
+                int(provider["id"])
+                for provider in old.get("providers", [])
+                if isinstance(provider, dict)
+                and provider.get("id") is not None
+            }
+            added = [
+                provider
+                for provider in providers
+                if provider["id"] not in old_provider_ids
+            ]
+            if added and old.get("selected_provider_ids") == snapshot.get(
+                "selected_provider_ids"
+            ):
+                updates.append(
+                    {
+                        "change_type": "provider_added",
+                        "media_type": "movie",
+                        "tmdb_id": tmdb_id,
+                        "title": snapshot["title"],
+                        "providers": added,
+                    }
+                )
+
+        if current != previous:
+            await self.store.set_watchlist_snapshots(current)
+        detected_at = dt_util.now().isoformat()
+        for update in updates:
+            update["region"] = self.region
+            update["detected_at"] = detected_at
+            self.hass.bus.async_fire(EVENT_RELEASE_UPDATE, update)
+        self._release_updates = updates
+        return updates
 
     async def async_mark_released_episodes_watched(
         self,
@@ -486,6 +666,10 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "release_date": details.get(
                 "release_date",
                 movie.get("release_date"),
+            ),
+            "digital_release_date": self._digital_release_date(
+                details,
+                self.region,
             ),
             "vote_average": details.get(
                 "vote_average",
@@ -2274,6 +2458,71 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             or profile.get("release_date_lte")
         )
 
+    async def _person_profile_candidates(
+        self,
+        profile: dict[str, Any],
+        media_type: str,
+        excluded_ids: set[int],
+        limit: int,
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        """Resolve and enrich one person's deduplicated TMDB credits."""
+        person_id = int(profile.get("person_id") or 0)
+        if person_id <= 0:
+            raise ValueError("Person profile is missing a TMDB person ID")
+        credits = await self.api.get_person_combined_credits(
+            person_id,
+            self.language,
+        )
+        merged: dict[int, dict[str, Any]] = {}
+        for group, role_field in (("cast", "character"), ("crew", "job")):
+            for credit in credits.get(group) or []:
+                if not isinstance(credit, dict):
+                    continue
+                if str(credit.get("media_type") or "") != media_type:
+                    continue
+                if credit.get("id") is None:
+                    continue
+                tmdb_id = int(credit["id"])
+                item = merged.setdefault(tmdb_id, dict(credit))
+                roles = item.setdefault("person_roles", [])
+                role = str(credit.get(role_field) or "").strip()
+                if role and role not in roles:
+                    roles.append(role)
+
+        source_count = len(merged)
+        eligible = [
+            item
+            for item in merged.values()
+            if int(item["id"]) not in excluded_ids
+            and not self.store.is_dismissed(media_type, int(item["id"]))
+            and not (
+                bool(profile.get("exclude_watched", True))
+                and self.store.is_watched(media_type, int(item["id"]))
+            )
+        ]
+        eligible.sort(
+            key=lambda item: float(item.get("popularity") or 0),
+            reverse=True,
+        )
+        eligible_count = len(eligible)
+        eligible = eligible[: max(80, min(400, limit * 4))]
+        enriched = await asyncio.gather(
+            *(
+                self._enrich_movie(item)
+                if media_type == "movie"
+                else self._enrich_tv_discovery(item)
+                for item in eligible
+            )
+        )
+        for item in enriched:
+            raw = merged.get(int(item["id"]), {})
+            item["person"] = {
+                "id": person_id,
+                "name": profile.get("person_name"),
+                "roles": list(raw.get("person_roles", [])),
+            }
+        return list(enriched), source_count, eligible_count
+
     async def _build_discovery_profiles(
         self,
         *,
@@ -2336,6 +2585,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 genre_match = "any"
 
             items: list[dict[str, Any]]
+            source_candidate_count = 0
+            eligible_candidate_count = 0
 
             award_source = str(
                 profile.get("award_source", AWARD_SOURCE_NONE)
@@ -2354,12 +2605,16 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         else watchlist_tv_ids
                     ),
                 )
+                source_candidate_count = len(items)
+                eligible_candidate_count = len(items)
             elif (
                 award == PROFILE_AWARD_OSCARS_BEST_PICTURE_2026
                 and media_type == "movie"
             ):
                 # Backward compatibility with v0.13 profiles.
                 items = [dict(item) for item in oscar_movies]
+                source_candidate_count = len(items)
+                eligible_candidate_count = len(items)
             elif source == PROFILE_SOURCE_PERSONALIZED:
                 items = [
                     dict(item)
@@ -2369,6 +2624,21 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         else personalized_tv
                     )
                 ]
+                source_candidate_count = len(items)
+                eligible_candidate_count = len(items)
+            elif source == PROFILE_SOURCE_PERSON:
+                items, source_candidate_count, eligible_candidate_count = (
+                    await self._person_profile_candidates(
+                        profile,
+                        media_type,
+                        (
+                            watchlist_ids
+                            if media_type == "movie"
+                            else watchlist_tv_ids
+                        ),
+                        limit,
+                    )
+                )
             else:
                 if media_type == "movie":
                     raw = await self.api.discover_movies(
@@ -2391,6 +2661,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         ),
                         max_pages=max_pages,
                     )
+                    source_candidate_count = len(raw)
                     exclude_ids = set(watchlist_ids)
                     if exclude_watched:
                         exclude_ids.update(self.store.watched_movies)
@@ -2401,7 +2672,9 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         and not self.store.is_dismissed(
                             "movie", int(item["id"])
                         )
-                    ][: max(limit * 2, limit)]
+                    ]
+                    eligible_candidate_count = len(raw)
+                    raw = raw[: max(limit * 2, limit)]
                     items = list(
                         await asyncio.gather(
                             *(self._enrich_movie(item) for item in raw)
@@ -2428,6 +2701,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         ),
                         max_pages=max_pages,
                     )
+                    source_candidate_count = len(raw)
                     exclude_ids = set(watchlist_tv_ids)
                     if exclude_watched:
                         exclude_ids.update(self.store.watched_tv)
@@ -2438,7 +2712,9 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         and not self.store.is_dismissed(
                             "tv", int(item["id"])
                         )
-                    ][: max(limit * 2, limit)]
+                    ]
+                    eligible_candidate_count = len(raw)
+                    raw = raw[: max(limit * 2, limit)]
                     items = list(
                         await asyncio.gather(
                             *(
@@ -2448,7 +2724,10 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         )
                     )
 
-            items = self._profile_post_filter(
+            if source == PROFILE_SOURCE_PERSON and provider_scope == "all":
+                items = [item for item in items if item.get("providers")]
+
+            filtered_items = self._profile_post_filter(
                 items,
                 profile,
                 media_type,
@@ -2457,7 +2736,9 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     if media_type == "movie"
                     else watchlist_tv_ids
                 ),
-            )[:limit]
+            )
+            post_filter_count = len(filtered_items)
+            items = filtered_items[:limit]
 
             for item in items:
                 award_summary = self._award_summary(item)
@@ -2472,6 +2753,14 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "award_filter": award,
                 "config": dict(profile),
                 "items": items,
+                "diagnostics": {
+                    "requested_limit": limit,
+                    "source_candidates": source_candidate_count,
+                    "eligible_candidates": eligible_candidate_count,
+                    "post_filter_candidates": post_filter_count,
+                    "final_count": len(items),
+                    "shortfall": max(0, limit - len(items)),
+                },
             }
 
         return output
@@ -2486,11 +2775,14 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         watchlist_tv_ids: set[int],
     ) -> None:
         """Update each discovery profile independently in the background."""
+        if not hasattr(self, "_profile_diagnostics"):
+            self._profile_diagnostics = {}
         profiles = self.discovery_profiles
         configured_ids = {str(profile["id"]) for profile in profiles}
         for profile_id in set(self._discovery_profile_results) - configured_ids:
             self._discovery_profile_results.pop(profile_id, None)
             self._discovery_profile_last_scheduled.pop(profile_id, None)
+            self._profile_diagnostics.pop(profile_id, None)
         for profile_id in set(self._discovery_profile_tasks) - configured_ids:
             task = self._discovery_profile_tasks.pop(profile_id)
             if not task.done():
@@ -2511,6 +2803,18 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ):
                 continue
             self._discovery_profile_last_scheduled[profile_id] = now
+            previous = self._profile_diagnostics.get(profile_id, {})
+            self._profile_diagnostics[profile_id] = {
+                **previous,
+                "id": profile_id,
+                "name": str(profile.get("name") or profile_id),
+                "media_type": str(profile.get("media_type") or "movie"),
+                "source": str(
+                    profile.get("source") or PROFILE_SOURCE_DISCOVER
+                ),
+                "status": "scheduled",
+                "error": None,
+            }
             self._discovery_profile_tasks[profile_id] = (
                 self.hass.async_create_background_task(
                     self._async_build_and_publish_discovery_profile(
@@ -2548,6 +2852,21 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         personalized_movies: list[dict[str, Any]] = []
         personalized_tv: list[dict[str, Any]] = []
         oscar_movies: list[dict[str, Any]] = []
+        if not hasattr(self, "_profile_diagnostics"):
+            self._profile_diagnostics = {}
+        started = asyncio.get_running_loop().time()
+        attempted_at = dt_util.now().isoformat()
+        previous_diagnostics = self._profile_diagnostics.get(profile_id, {})
+        self._profile_diagnostics[profile_id] = {
+            **previous_diagnostics,
+            "id": profile_id,
+            "name": str(profile.get("name") or profile_id),
+            "media_type": media_type,
+            "source": source,
+            "status": "updating",
+            "last_attempt": attempted_at,
+            "error": None,
+        }
 
         try:
             if source == PROFILE_SOURCE_PERSONALIZED:
@@ -2611,16 +2930,36 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except asyncio.CancelledError:
             raise
         except Exception as err:  # noqa: BLE001
+            self._profile_diagnostics[profile_id] = {
+                **self._profile_diagnostics[profile_id],
+                "status": "error",
+                "duration_ms": round(
+                    (asyncio.get_running_loop().time() - started) * 1000
+                ),
+                "error": f"{type(err).__name__}: {err}",
+            }
             _LOGGER.warning(
                 "Discovery profile %s failed without affecting other feeds: %s",
                 profile.get("name", profile_id),
                 err,
             )
+            if isinstance(getattr(self, "data", None), dict):
+                self.async_update_listeners()
             return
 
         feed = output.get(profile_id)
         if feed is None:
             return
+        self._profile_diagnostics[profile_id] = {
+            **self._profile_diagnostics[profile_id],
+            **dict(feed.get("diagnostics", {})),
+            "status": "ready",
+            "last_success": dt_util.now().isoformat(),
+            "duration_ms": round(
+                (asyncio.get_running_loop().time() - started) * 1000
+            ),
+            "error": None,
+        }
         self._discovery_profile_results[profile_id] = feed
         current_data = getattr(self, "data", None)
         if isinstance(current_data, dict):
@@ -2631,6 +2970,7 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
+            self._last_core_error = None
             defer_discovery = self._defer_discovery_profiles
             account_id = int(self.entry.data[CONF_ACCOUNT_ID])
 
@@ -2695,6 +3035,9 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
             tv_details = await asyncio.gather(
                 *(self._enrich_tv(show) for show in watchlist_tv)
+            )
+            release_updates = await self._async_track_watchlist_releases(
+                list(movie_details)
             )
 
             tv_provider_ids = sorted(
@@ -2826,11 +3169,17 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "provider_ids": selected_ids,
                 "watched_movies": self.store.watched_movies,
                 "dismissed_movies": self.store.dismissed_movies,
+                "release_updates": release_updates,
             }
+            self._last_core_success = dt_util.now().isoformat()
             self._defer_discovery_profiles = False
             return result
 
         except TMDBError as err:
+            self._last_core_error = str(err)
             raise UpdateFailed(
                 f"Error communicating with TMDB: {err}"
             ) from err
+        except Exception as err:  # noqa: BLE001
+            self._last_core_error = f"{type(err).__name__}: {err}"
+            raise

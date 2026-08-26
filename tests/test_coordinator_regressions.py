@@ -792,6 +792,11 @@ def test_discovery_profiles_publish_independently_on_failure() -> None:
     asyncio.run(run_profiles())
 
     assert "slow" not in coordinator.data["discovery_profiles"]
+    assert coordinator._profile_diagnostics["fast"]["status"] == "ready"
+    assert coordinator._profile_diagnostics["slow"]["status"] == "error"
+    assert "RuntimeError: broken profile" in coordinator._profile_diagnostics[
+        "slow"
+    ]["error"]
 
 
 def test_movie_details_append_credits_and_external_ids() -> None:
@@ -811,8 +816,363 @@ def test_movie_details_append_credits_and_external_ids() -> None:
     assert captured["path"] == "/movie/7"
     assert captured["params"] == {
         "language": "sv-SE",
-        "append_to_response": "credits,external_ids",
+        "append_to_response": "credits,external_ids,release_dates",
     }
+
+
+def test_regional_digital_release_uses_earliest_tmdb_date() -> None:
+    assert MediaWatchCoordinator._digital_release_date(
+        {
+            "release_dates": {
+                "results": [
+                    {
+                        "iso_3166_1": "SE",
+                        "release_dates": [
+                            {
+                                "type": 4,
+                                "release_date": "2026-10-02T00:00:00Z",
+                            },
+                            {
+                                "type": 4,
+                                "release_date": "2026-09-01T00:00:00Z",
+                            },
+                        ],
+                    },
+                    {
+                        "iso_3166_1": "US",
+                        "release_dates": [
+                            {
+                                "type": 4,
+                                "release_date": "2026-01-01T00:00:00Z",
+                            }
+                        ],
+                    },
+                ]
+            }
+        },
+        "SE",
+    ) == "2026-09-01"
+
+
+def test_release_updates_baseline_then_fire_automation_events() -> None:
+    coordinator = _coordinator()
+    coordinator._profile_language = None
+    coordinator._profile_region = None
+    coordinator.entry = SimpleNamespace(
+        options={
+            "use_profile_language": False,
+            "region": "SE",
+            "providers": [8],
+        }
+    )
+
+    class Store(_Store):
+        watchlist_snapshots: dict[str, dict] = {}
+
+        async def set_watchlist_snapshots(self, snapshots):
+            self.watchlist_snapshots = snapshots
+
+    events: list[tuple[str, dict]] = []
+    coordinator.store = Store()
+    coordinator.hass.bus = SimpleNamespace(
+        async_fire=lambda event_type, data: events.append(
+            (event_type, dict(data))
+        )
+    )
+    baseline = [
+        {
+            "id": 1,
+            "title": "Film",
+            "release_date": None,
+            "digital_release_date": None,
+            "my_provider_details": [],
+        }
+    ]
+    changed = [
+        {
+            "id": 1,
+            "title": "Film",
+            "release_date": "2027-01-02",
+            "digital_release_date": "2027-02-03",
+            "my_provider_details": [{"id": 8, "name": "Netflix"}],
+        }
+    ]
+
+    assert asyncio.run(
+        coordinator._async_track_watchlist_releases(baseline)
+    ) == []
+    updates = asyncio.run(
+        coordinator._async_track_watchlist_releases(changed)
+    )
+
+    assert [item["change_type"] for item in updates] == [
+        "release_date_announced",
+        "digital_release_date_announced",
+        "provider_added",
+    ]
+    assert {event_type for event_type, _ in events} == {
+        "media_watch_release_update"
+    }
+    assert events[-1][1]["providers"] == [
+        {"id": 8, "name": "Netflix"}
+    ]
+
+
+def test_provider_selection_change_does_not_emit_false_release_event() -> None:
+    coordinator = _coordinator()
+    coordinator._profile_language = None
+    coordinator._profile_region = None
+
+    class Store(_Store):
+        watchlist_snapshots = {
+            "1": {
+                "tmdb_id": 1,
+                "title": "Film",
+                "release_date": "2026-01-01",
+                "digital_release_date": None,
+                "region": "SE",
+                "selected_provider_ids": [8],
+                "providers": [],
+            }
+        }
+
+        async def set_watchlist_snapshots(self, snapshots):
+            self.watchlist_snapshots = snapshots
+
+    events = []
+    coordinator.store = Store()
+    coordinator.hass.bus = SimpleNamespace(
+        async_fire=lambda event_type, data: events.append(data)
+    )
+    coordinator.entry = SimpleNamespace(
+        options={
+            "use_profile_language": False,
+            "region": "SE",
+            "providers": [8, 9],
+        }
+    )
+
+    updates = asyncio.run(
+        coordinator._async_track_watchlist_releases(
+            [
+                {
+                    "id": 1,
+                    "title": "Film",
+                    "release_date": "2026-01-01",
+                    "digital_release_date": None,
+                    "my_provider_details": [{"id": 9, "name": "Max"}],
+                }
+            ]
+        )
+    )
+
+    assert updates == []
+    assert events == []
+
+
+def test_person_profile_combines_roles_and_excludes_watchlist() -> None:
+    coordinator = _coordinator()
+    coordinator._profile_language = None
+    coordinator._profile_region = None
+    coordinator.entry = SimpleNamespace(
+        options={"language": "sv-SE", "use_profile_language": False}
+    )
+
+    class Api:
+        async def get_person_combined_credits(self, person_id, language):
+            assert person_id == 42
+            assert language == "sv-SE"
+            return {
+                "cast": [
+                    {
+                        "id": 1,
+                        "media_type": "movie",
+                        "title": "One",
+                        "character": "Lead",
+                        "popularity": 10,
+                    },
+                    {
+                        "id": 2,
+                        "media_type": "movie",
+                        "title": "Two",
+                        "character": "Cameo",
+                        "popularity": 9,
+                    },
+                ],
+                "crew": [
+                    {
+                        "id": 1,
+                        "media_type": "movie",
+                        "title": "One",
+                        "job": "Director",
+                    }
+                ],
+            }
+
+    async def enrich(self, item):
+        return {"id": item["id"], "title": item["title"]}
+
+    coordinator.api = Api()
+    coordinator._enrich_movie = MethodType(enrich, coordinator)
+
+    items, source_count, eligible_count = asyncio.run(
+        coordinator._person_profile_candidates(
+            {
+                "person_id": 42,
+                "person_name": "Example Person",
+                "exclude_watched": True,
+            },
+            "movie",
+            {2},
+            30,
+        )
+    )
+
+    assert source_count == 2
+    assert eligible_count == 1
+    assert items == [
+        {
+            "id": 1,
+            "title": "One",
+            "person": {
+                "id": 42,
+                "name": "Example Person",
+                "roles": ["Lead", "Director"],
+            },
+        }
+    ]
+
+
+def test_person_profile_uses_common_provider_filter_and_diagnostics() -> None:
+    coordinator = _coordinator()
+
+    async def candidates(self, profile, media_type, excluded_ids, limit):
+        return (
+            [
+                {
+                    "id": 1,
+                    "providers": ["Netflix"],
+                    "vote_average": 8,
+                    "vote_count": 100,
+                },
+                {
+                    "id": 2,
+                    "providers": [],
+                    "vote_average": 8,
+                    "vote_count": 100,
+                },
+            ],
+            2,
+            2,
+        )
+
+    coordinator._person_profile_candidates = MethodType(
+        candidates, coordinator
+    )
+    output = asyncio.run(
+        coordinator._build_discovery_profiles(
+            selected_ids=[8],
+            movie_provider_ids=[8],
+            tv_provider_ids=[8],
+            watchlist_ids=set(),
+            watchlist_tv_ids=set(),
+            personalized_movies=[],
+            personalized_tv=[],
+            oscar_movies=[],
+            profiles=[
+                {
+                    "id": "person",
+                    "name": "Person",
+                    "media_type": "movie",
+                    "source": "person",
+                    "person_id": 42,
+                    "person_name": "Example",
+                    "provider_scope": "all",
+                    "limit": 5,
+                }
+            ],
+        )
+    )["person"]
+
+    assert [item["id"] for item in output["items"]] == [1]
+    assert output["diagnostics"] == {
+        "requested_limit": 5,
+        "source_candidates": 2,
+        "eligible_candidates": 2,
+        "post_filter_candidates": 1,
+        "final_count": 1,
+        "shortfall": 4,
+    }
+
+
+def test_queue_diagnostics_reports_profile_errors_and_shortfall() -> None:
+    coordinator = _coordinator()
+    coordinator.entry = SimpleNamespace(
+        options={
+            "discovery_profiles": [
+                {
+                    "id": "horror",
+                    "name": "Horror",
+                    "media_type": "movie",
+                    "source": "discover",
+                }
+            ]
+        }
+    )
+    coordinator._profile_diagnostics = {
+        "horror": {
+            "id": "horror",
+            "name": "Horror",
+            "status": "error",
+            "requested_limit": 30,
+            "final_count": 12,
+            "shortfall": 18,
+            "error": "TMDBError: rate limited",
+        }
+    }
+    coordinator._last_core_success = "2026-08-26T12:00:00+00:00"
+    coordinator._last_core_error = None
+
+    diagnostics = coordinator.queue_diagnostics
+
+    assert diagnostics["status"] == "degraded"
+    assert diagnostics["failed_profiles"] == 1
+    assert diagnostics["profiles"][0]["shortfall"] == 18
+
+
+def test_person_api_calls_use_tmdb_search_and_combined_credits() -> None:
+    api = object.__new__(TMDBApi)
+    calls: list[dict[str, object]] = []
+
+    async def request(self, method, path, **kwargs):
+        calls.append({"method": method, "path": path, **kwargs})
+        return {"results": [{"id": 42, "name": "Example"}]}
+
+    api._request = MethodType(request, api)
+
+    assert asyncio.run(api.search_people("Example", "sv-SE")) == [
+        {"id": 42, "name": "Example"}
+    ]
+    asyncio.run(api.get_person_combined_credits(42, "sv-SE"))
+
+    assert calls == [
+        {
+            "method": "GET",
+            "path": "/search/person",
+            "params": {
+                "query": "Example",
+                "language": "sv-SE",
+                "include_adult": "false",
+            },
+            "include_session": False,
+        },
+        {
+            "method": "GET",
+            "path": "/person/42/combined_credits",
+            "params": {"language": "sv-SE"},
+            "include_session": False,
+        },
+    ]
 
 
 def test_person_details_requests_english_aliases() -> None:

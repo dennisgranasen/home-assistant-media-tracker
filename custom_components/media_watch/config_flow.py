@@ -41,6 +41,7 @@ from .const import (
     CONF_USERNAME,
     CONF_DISCOVERY_PROFILES,
     PROFILE_SOURCE_DISCOVER,
+    PROFILE_SOURCE_PERSON,
     PROFILE_SOURCE_PERSONALIZED,
     PROFILE_AWARD_NONE,
     PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
@@ -221,6 +222,7 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
     def __init__(self) -> None:
         self._editing_profile_id: str | None = None
         self._profile_draft: dict[str, Any] = {}
+        self._person_search_results: dict[str, dict[str, Any]] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -439,6 +441,8 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             self._profile_draft.update(user_input)
+            if self._profile_draft.get("source") == PROFILE_SOURCE_PERSON:
+                return await self.async_step_profile_person()
             return await self.async_step_profile_awards()
 
         def d(key: str, fallback: Any) -> Any:
@@ -480,10 +484,120 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                                     "value": PROFILE_SOURCE_PERSONALIZED,
                                     "label": "Personalized",
                                 },
+                                {
+                                    "value": PROFILE_SOURCE_PERSON,
+                                    "label": "Person filmography",
+                                },
                             ],
                             mode=SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                }
+            ),
+        )
+
+    async def async_step_profile_person(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Search TMDB before selecting a person for the profile."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            query = str(user_input.get("person_query") or "").strip()
+            if len(query) < 2:
+                errors["base"] = "person_not_found"
+            else:
+                api = TMDBApi(
+                    async_get_clientsession(self.hass),
+                    self.config_entry.data[CONF_ACCESS_TOKEN],
+                    self.config_entry.data[CONF_SESSION_ID],
+                )
+                try:
+                    results = await api.search_people(
+                        query,
+                        str(
+                            self.config_entry.options.get(
+                                CONF_LANGUAGE, DEFAULT_LANGUAGE
+                            )
+                        ),
+                    )
+                except TMDBError:
+                    errors["base"] = "cannot_connect"
+                else:
+                    self._person_search_results = {
+                        str(item["id"]): item
+                        for item in results[:20]
+                        if item.get("id") is not None and item.get("name")
+                    }
+                    if self._person_search_results:
+                        return await self.async_step_profile_person_select()
+                    errors["base"] = "person_not_found"
+
+        return self.async_show_form(
+            step_id="profile_person",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "person_query",
+                        default=str(
+                            self._profile_draft.get("person_name") or ""
+                        ),
+                    ): TextSelector(TextSelectorConfig())
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_profile_person_select(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Choose one result and continue to ordinary profile filters."""
+        if user_input is not None:
+            person_id = str(user_input["person_id"])
+            person = self._person_search_results[person_id]
+            self._profile_draft.update(
+                {
+                    "person_id": int(person_id),
+                    "person_name": str(person["name"]),
+                    "person_department": person.get(
+                        "known_for_department"
+                    ),
+                    "award_source": AWARD_SOURCE_NONE,
+                    "award_preset": AWARD_PRESET_NONE,
+                    "award_category": "all",
+                    "award_status": AWARD_STATUS_ANY,
+                    "award_year_from": "",
+                    "award_year_to": "",
+                }
+            )
+            return await self.async_step_profile_filters()
+
+        options = []
+        for person_id, person in self._person_search_results.items():
+            known_for = [
+                str(item.get("title") or item.get("name"))
+                for item in person.get("known_for", [])[:3]
+                if item.get("title") or item.get("name")
+            ]
+            detail = str(person.get("known_for_department") or "")
+            if known_for:
+                detail = f"{detail} · {', '.join(known_for)}".strip(" ·")
+            label = str(person["name"])
+            if detail:
+                label = f"{label} — {detail}"
+            options.append({"value": person_id, "label": label})
+
+        return self.async_show_form(
+            step_id="profile_person_select",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("person_id"): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
                 }
             ),
         )
@@ -1101,6 +1215,11 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
 
         profile["id"] = profile_id
         profile["name"] = name
+
+        if profile.get("source") != PROFILE_SOURCE_PERSON:
+            profile.pop("person_id", None)
+            profile.pop("person_name", None)
+            profile.pop("person_department", None)
 
         for key in (
             "include_genres",

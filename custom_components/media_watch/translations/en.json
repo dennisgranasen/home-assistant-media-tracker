@@ -60,6 +60,20 @@
           "source": "Discovery source"
         }
       },
+      "profile_person": {
+        "title": "Find a person",
+        "description": "Search TMDB for an actor, director, writer or other filmmaker.",
+        "data": {
+          "person_query": "Name"
+        }
+      },
+      "profile_person_select": {
+        "title": "Select person",
+        "description": "Choose the intended person. Known works are shown to disambiguate identical names.",
+        "data": {
+          "person_id": "Person"
+        }
+      },
       "profile_awards": {
         "title": "Awards",
         "description": "Step 2 of 3: optionally constrain this profile by an award source.",
@@ -99,7 +113,8 @@
       }
     },
     "error": {
-      "cannot_connect": "Could not load streaming providers from TMDB."
+      "cannot_connect": "Could not load data from TMDB.",
+      "person_not_found": "No matching people were found on TMDB."
     }
   }
 }
