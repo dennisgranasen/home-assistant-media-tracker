@@ -267,6 +267,7 @@ def test_config_profile_fields_match_coordinator_expectations() -> None:
         "source",
         "person_id",
         "person_name",
+        "source_profile_ids",
         "award_source",
         "award_preset",
         "award_category",

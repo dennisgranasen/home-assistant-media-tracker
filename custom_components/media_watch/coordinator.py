@@ -43,6 +43,7 @@ from .const import (
     UPDATE_INTERVAL,
     OSCAR_BEST_PICTURE_2026,
     PROFILE_SOURCE_DISCOVER,
+    PROFILE_SOURCE_AGGREGATE,
     PROFILE_SOURCE_PERSON,
     PROFILE_SOURCE_PERSONALIZED,
     PROFILE_AWARD_NONE,
@@ -2587,6 +2588,8 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             items: list[dict[str, Any]]
             source_candidate_count = 0
             eligible_candidate_count = 0
+            source_profile_ids: list[str] = []
+            missing_source_profile_ids: list[str] = []
 
             award_source = str(
                 profile.get("award_source", AWARD_SOURCE_NONE)
@@ -2639,6 +2642,45 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         limit,
                     )
                 )
+            elif source == PROFILE_SOURCE_AGGREGATE:
+                source_profile_ids = [
+                    str(source_profile_id)
+                    for source_profile_id in profile.get(
+                        "source_profile_ids", []
+                    )
+                ]
+                combined: dict[int, dict[str, Any]] = {}
+                for source_profile_id in source_profile_ids:
+                    source_feed = self._discovery_profile_results.get(
+                        source_profile_id
+                    )
+                    if source_feed is None:
+                        missing_source_profile_ids.append(source_profile_id)
+                        continue
+                    source_name = str(
+                        source_feed.get("name") or source_profile_id
+                    )
+                    for raw_item in source_feed.get("items", []):
+                        source_candidate_count += 1
+                        tmdb_id = int(raw_item["id"])
+                        item = combined.get(tmdb_id)
+                        if item is None:
+                            item = dict(raw_item)
+                            item["source_profiles"] = []
+                            item["people"] = []
+                            combined[tmdb_id] = item
+                        source_profiles = item["source_profiles"]
+                        source_ref = {
+                            "id": source_profile_id,
+                            "name": source_name,
+                        }
+                        if source_ref not in source_profiles:
+                            source_profiles.append(source_ref)
+                        person = raw_item.get("person")
+                        if person and person not in item["people"]:
+                            item["people"].append(dict(person))
+                items = list(combined.values())
+                eligible_candidate_count = len(items)
             else:
                 if media_type == "movie":
                     raw = await self.api.discover_movies(
@@ -2760,6 +2802,16 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "post_filter_candidates": post_filter_count,
                     "final_count": len(items),
                     "shortfall": max(0, limit - len(items)),
+                    **(
+                        {
+                            "source_profile_ids": source_profile_ids,
+                            "missing_source_profile_ids": (
+                                missing_source_profile_ids
+                            ),
+                        }
+                        if source == PROFILE_SOURCE_AGGREGATE
+                        else {}
+                    ),
                 },
             }
 
@@ -2777,7 +2829,13 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Update each discovery profile independently in the background."""
         if not hasattr(self, "_profile_diagnostics"):
             self._profile_diagnostics = {}
-        profiles = self.discovery_profiles
+        profiles = sorted(
+            self.discovery_profiles,
+            key=lambda profile: str(
+                profile.get("source", PROFILE_SOURCE_DISCOVER)
+            ).lower()
+            == PROFILE_SOURCE_AGGREGATE,
+        )
         configured_ids = {str(profile["id"]) for profile in profiles}
         for profile_id in set(self._discovery_profile_results) - configured_ids:
             self._discovery_profile_results.pop(profile_id, None)
@@ -2869,6 +2927,26 @@ class MediaWatchCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
         try:
+            if source == PROFILE_SOURCE_AGGREGATE:
+                dependencies = [
+                    task
+                    for source_profile_id in profile.get(
+                        "source_profile_ids", []
+                    )
+                    if (
+                        task := self._discovery_profile_tasks.get(
+                            str(source_profile_id)
+                        )
+                    )
+                    is not None
+                    and task is not asyncio.current_task()
+                    and not task.done()
+                ]
+                if dependencies:
+                    await asyncio.gather(
+                        *dependencies, return_exceptions=True
+                    )
+
             if source == PROFILE_SOURCE_PERSONALIZED:
                 if media_type == "tv":
                     personalized_tv = await self._personalized_recommendations(

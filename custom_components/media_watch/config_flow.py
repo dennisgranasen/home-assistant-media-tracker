@@ -40,6 +40,7 @@ from .const import (
     CONF_SESSION_ID,
     CONF_USERNAME,
     CONF_DISCOVERY_PROFILES,
+    PROFILE_SOURCE_AGGREGATE,
     PROFILE_SOURCE_DISCOVER,
     PROFILE_SOURCE_PERSON,
     PROFILE_SOURCE_PERSONALIZED,
@@ -443,6 +444,8 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
             self._profile_draft.update(user_input)
             if self._profile_draft.get("source") == PROFILE_SOURCE_PERSON:
                 return await self.async_step_profile_person()
+            if self._profile_draft.get("source") == PROFILE_SOURCE_AGGREGATE:
+                return await self.async_step_profile_aggregate()
             return await self.async_step_profile_awards()
 
         def d(key: str, fallback: Any) -> Any:
@@ -487,6 +490,10 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                                 {
                                     "value": PROFILE_SOURCE_PERSON,
                                     "label": "Person filmography",
+                                },
+                                {
+                                    "value": PROFILE_SOURCE_AGGREGATE,
+                                    "label": "Combined profiles",
                                 },
                             ],
                             mode=SelectSelectorMode.DROPDOWN,
@@ -600,6 +607,78 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
                     )
                 }
             ),
+        )
+
+    async def async_step_profile_aggregate(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> FlowResult:
+        """Choose ordinary profiles whose visible results form a union."""
+        media_type = str(self._profile_draft.get("media_type", "movie"))
+        candidates = [
+            profile
+            for profile in self._profiles()
+            if str(profile.get("id")) != self._editing_profile_id
+            and str(profile.get("media_type", "movie")) == media_type
+            and str(profile.get("source", PROFILE_SOURCE_DISCOVER))
+            != PROFILE_SOURCE_AGGREGATE
+        ]
+        valid_ids = {str(profile["id"]) for profile in candidates}
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            source_profile_ids = [
+                str(profile_id)
+                for profile_id in user_input.get("source_profile_ids", [])
+                if str(profile_id) in valid_ids
+            ]
+            if not source_profile_ids:
+                errors["base"] = "aggregate_profile_required"
+            else:
+                self._profile_draft.update(
+                    {
+                        "source_profile_ids": source_profile_ids,
+                        "award_source": AWARD_SOURCE_NONE,
+                        "award_preset": AWARD_PRESET_NONE,
+                        "award_category": "all",
+                        "award_status": AWARD_STATUS_ANY,
+                        "award_year_from": "",
+                        "award_year_to": "",
+                    }
+                )
+                return await self.async_step_profile_filters()
+
+        defaults = [
+            str(profile_id)
+            for profile_id in self._profile_draft.get(
+                "source_profile_ids", []
+            )
+            if str(profile_id) in valid_ids
+        ]
+        return self.async_show_form(
+            step_id="profile_aggregate",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        "source_profile_ids", default=defaults
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(
+                                    value=str(profile["id"]),
+                                    label=str(
+                                        profile.get("name") or profile["id"]
+                                    ),
+                                )
+                                for profile in candidates
+                            ],
+                            multiple=True,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
+            errors=errors,
         )
 
     async def async_step_profile_awards(
@@ -1220,6 +1299,14 @@ class MediaWatchOptionsFlow(config_entries.OptionsFlow):
             profile.pop("person_id", None)
             profile.pop("person_name", None)
             profile.pop("person_department", None)
+
+        if profile.get("source") == PROFILE_SOURCE_AGGREGATE:
+            profile["source_profile_ids"] = [
+                str(profile_id)
+                for profile_id in profile.get("source_profile_ids", [])
+            ]
+        else:
+            profile.pop("source_profile_ids", None)
 
         for key in (
             "include_genres",

@@ -74,6 +74,13 @@
           "person_id": "Person"
         }
       },
+      "profile_aggregate": {
+        "title": "Kombinera profiler",
+        "description": "Välj profiler av samma mediatyp. Deras synliga resultat slås ihop och dubbletter tas bort innan den här profilens egna filter och gräns används.",
+        "data": {
+          "source_profile_ids": "Källprofiler"
+        }
+      },
       "profile_awards": {
         "title": "Awards",
         "description": "Steg 2 av 3: begränsa profilen med en award-källa om du vill.",
@@ -114,7 +121,8 @@
     },
     "error": {
       "cannot_connect": "Kunde inte läsa data från TMDB.",
-      "person_not_found": "Inga matchande personer hittades på TMDB."
+      "person_not_found": "Inga matchande personer hittades på TMDB.",
+      "aggregate_profile_required": "Välj minst en källprofil."
     }
   }
 }

@@ -525,6 +525,8 @@ def _movie_feed_item(
         "watched": item.get("watched", False),
         "recommendation": item.get("recommendation"),
         "person": item.get("person"),
+        "people": item.get("people", []),
+        "source_profiles": item.get("source_profiles", []),
         "award": item.get("award"),
         "award_summary": item.get("award_summary"),
         "deep_link": (
@@ -573,6 +575,8 @@ def _tv_feed_item(
         ),
         "recommendation": item.get("recommendation"),
         "person": item.get("person"),
+        "people": item.get("people", []),
+        "source_profiles": item.get("source_profiles", []),
         "deep_link": (
             "https://www.themoviedb.org/tv/"
             f"{item.get('id')}"

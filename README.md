@@ -67,8 +67,8 @@ global. They belong to each discovery profile.
 Under **Configure → Discovery profiles**, choose **Add profile**, **Edit** or
 **Delete**. Creating or editing a profile has four stages:
 
-1. Name, movie/TV media type and source: general discovery, personalized or a
-   person's filmography.
+1. Name, movie/TV media type and source: general discovery, personalized, a
+   person's filmography or combined profiles.
 2. Optional award organization.
 3. Award preset, category, status and award-year range when awards are enabled.
 4. Provider, watched, rating, genre, release-year, sorting, page-depth and
@@ -100,6 +100,16 @@ using their department and known works. Cast and crew credits are combined and
 deduplicated, so the same title is not repeated when a person had several
 roles. Every ordinary profile filter still applies. Items expose `person` with
 the TMDB person ID, name and credited roles.
+
+For **Combined profiles**, select one or more existing, non-combined profiles
+of the same media type. The new feed is the union of their currently visible
+results, with duplicate TMDB titles removed, followed by the combined
+profile's own filters, sorting and limit. For example, create three person
+filmography profiles and combine them into a single **Favorite actors** feed.
+Each item exposes `source_profiles`; items originating in person profiles also
+expose all matching people in `people`. Combined profiles wait for their source
+profiles during background refresh, and missing/deleted sources are reported
+by the queue diagnostics sensor.
 
 Award years, release years and maximum age use numeric selectors. Empty values
 are genuinely optional and remain valid when an existing profile is edited.

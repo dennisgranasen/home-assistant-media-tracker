@@ -14,6 +14,7 @@ from custom_components.media_watch.const import (
     AWARD_PRESET_BEST_PICTURE_WINNERS,
     AWARD_SOURCE_ANY,
     PROFILE_AWARD_OSCARS_BEST_PICTURE_2026,
+    PROFILE_SOURCE_AGGREGATE,
 )
 from custom_components.media_watch.coordinator import MediaWatchCoordinator
 from custom_components.media_watch.store import MediaWatchStore
@@ -1103,6 +1104,164 @@ def test_person_profile_uses_common_provider_filter_and_diagnostics() -> None:
         "final_count": 1,
         "shortfall": 4,
     }
+
+
+def test_aggregate_profile_unions_visible_results_and_deduplicates() -> None:
+    coordinator = _coordinator()
+    coordinator._discovery_profile_results = {
+        "actor_one": {
+            "name": "Actor One",
+            "items": [
+                {
+                    "id": 1,
+                    "title": "Shared",
+                    "popularity": 5,
+                    "vote_average": 8,
+                    "vote_count": 100,
+                    "person": {"id": 11, "name": "Actor One"},
+                },
+                {
+                    "id": 2,
+                    "title": "Only one",
+                    "popularity": 2,
+                    "vote_average": 7,
+                    "vote_count": 50,
+                    "person": {"id": 11, "name": "Actor One"},
+                },
+            ],
+        },
+        "actor_two": {
+            "name": "Actor Two",
+            "items": [
+                {
+                    "id": 1,
+                    "title": "Shared",
+                    "popularity": 5,
+                    "vote_average": 8,
+                    "vote_count": 100,
+                    "person": {"id": 22, "name": "Actor Two"},
+                },
+                {
+                    "id": 3,
+                    "title": "Only two",
+                    "popularity": 10,
+                    "vote_average": 9,
+                    "vote_count": 200,
+                    "person": {"id": 22, "name": "Actor Two"},
+                },
+            ],
+        },
+    }
+
+    output = asyncio.run(
+        coordinator._build_discovery_profiles(
+            selected_ids=[],
+            movie_provider_ids=[],
+            tv_provider_ids=[],
+            watchlist_ids=set(),
+            watchlist_tv_ids=set(),
+            personalized_movies=[],
+            personalized_tv=[],
+            oscar_movies=[],
+            profiles=[
+                {
+                    "id": "favorites",
+                    "name": "Favorite actors",
+                    "media_type": "movie",
+                    "source": PROFILE_SOURCE_AGGREGATE,
+                    "source_profile_ids": [
+                        "actor_one",
+                        "actor_two",
+                        "deleted",
+                    ],
+                    "sort_by": "popularity.desc",
+                    "limit": 2,
+                }
+            ],
+        )
+    )["favorites"]
+
+    assert [item["id"] for item in output["items"]] == [3, 1]
+    assert output["items"][1]["source_profiles"] == [
+        {"id": "actor_one", "name": "Actor One"},
+        {"id": "actor_two", "name": "Actor Two"},
+    ]
+    assert output["items"][1]["people"] == [
+        {"id": 11, "name": "Actor One"},
+        {"id": 22, "name": "Actor Two"},
+    ]
+    assert output["diagnostics"] == {
+        "requested_limit": 2,
+        "source_candidates": 4,
+        "eligible_candidates": 3,
+        "post_filter_candidates": 3,
+        "final_count": 2,
+        "shortfall": 0,
+        "source_profile_ids": ["actor_one", "actor_two", "deleted"],
+        "missing_source_profile_ids": ["deleted"],
+    }
+
+
+def test_aggregate_profile_waits_for_source_profile_update() -> None:
+    async def scenario() -> None:
+        coordinator = _coordinator()
+        coordinator._profile_diagnostics = {}
+        coordinator._discovery_profile_results = {}
+        coordinator.data = {"discovery_profiles": {}}
+        dependency_started = asyncio.Event()
+        release_dependency = asyncio.Event()
+        build_called = asyncio.Event()
+
+        async def dependency() -> None:
+            dependency_started.set()
+            await release_dependency.wait()
+
+        dependency_task = asyncio.create_task(dependency())
+        coordinator._discovery_profile_tasks = {
+            "actor": dependency_task
+        }
+
+        async def build(self, **kwargs):
+            build_called.set()
+            profile = kwargs["profiles"][0]
+            return {
+                "combined": {
+                    "id": "combined",
+                    "name": "Combined",
+                    "items": [],
+                    "diagnostics": {},
+                    "config": profile,
+                }
+            }
+
+        coordinator._build_discovery_profiles = MethodType(
+            build, coordinator
+        )
+        combined_task = asyncio.create_task(
+            coordinator._async_build_and_publish_discovery_profile(
+                {
+                    "id": "combined",
+                    "name": "Combined",
+                    "media_type": "movie",
+                    "source": PROFILE_SOURCE_AGGREGATE,
+                    "source_profile_ids": ["actor"],
+                },
+                selected_ids=[],
+                movie_provider_ids=[],
+                tv_provider_ids=[],
+                watchlist_ids=set(),
+                watchlist_tv_ids=set(),
+            )
+        )
+
+        await dependency_started.wait()
+        await asyncio.sleep(0)
+        assert not build_called.is_set()
+        release_dependency.set()
+        await combined_task
+        assert build_called.is_set()
+
+    asyncio.run(scenario())
 
 
 def test_queue_diagnostics_reports_profile_errors_and_shortfall() -> None:

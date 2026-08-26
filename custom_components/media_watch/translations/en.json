@@ -74,6 +74,13 @@
           "person_id": "Person"
         }
       },
+      "profile_aggregate": {
+        "title": "Combine profiles",
+        "description": "Select profiles of the same media type. Their visible results are combined and duplicate titles are removed before this profile's own filters and limit are applied.",
+        "data": {
+          "source_profile_ids": "Source profiles"
+        }
+      },
       "profile_awards": {
         "title": "Awards",
         "description": "Step 2 of 3: optionally constrain this profile by an award source.",
@@ -114,7 +121,8 @@
     },
     "error": {
       "cannot_connect": "Could not load data from TMDB.",
-      "person_not_found": "No matching people were found on TMDB."
+      "person_not_found": "No matching people were found on TMDB.",
+      "aggregate_profile_required": "Select at least one source profile."
     }
   }
 }

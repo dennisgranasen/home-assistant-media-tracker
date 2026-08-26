@@ -92,6 +92,7 @@ CONF_DISCOVERY_PROFILES = "discovery_profiles"
 PROFILE_SOURCE_DISCOVER = "discover"
 PROFILE_SOURCE_PERSONALIZED = "personalized"
 PROFILE_SOURCE_PERSON = "person"
+PROFILE_SOURCE_AGGREGATE = "aggregate"
 
 EVENT_RELEASE_UPDATE = "media_watch_release_update"
 
