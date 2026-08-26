@@ -5,11 +5,11 @@
     "@dennisgranasen"
   ],
   "config_flow": true,
-  "single_config_entry": true,
   "documentation": "https://github.com/dennisgranasen/home-assistant-media-tracker",
-  "issue_tracker": "https://github.com/dennisgranasen/home-assistant-media-tracker/issues",
   "integration_type": "service",
   "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/dennisgranasen/home-assistant-media-tracker/issues",
   "requirements": [],
+  "single_config_entry": true,
   "version": "1.0.0"
 }
